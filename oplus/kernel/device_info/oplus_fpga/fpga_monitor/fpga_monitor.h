@@ -17,6 +17,7 @@
 #include <soc/oplus/system/oplus_project.h>
 
 #include "fpga_exception.h"
+#include "fpga_healthinfo.h"
 
 #define FPGA_MNT_I2C_NAME "fpga_monitor"
 #define FPGA_PROC_NAME "fpga"
@@ -28,25 +29,8 @@
 #define FPGA_SPI_TX               (1 << 3)
 #define FPGA_SPI_RX               (1 << 2)
 
-#define FPGA_M_IO_RX_POLL_BIT     (1 << 5)
-#define FPGA_M_I2C_RX_POLL_BIT    (1 << 4)
-#define FPGA_M_SPI_RX_POLL_BIT    (1 << 3)
-#define FPGA_S_IO_RX_POLL_BIT     (1 << 2)
-#define FPGA_S_I2C_RX_POLL_BIT    (1 << 1)
-#define FPGA_S_SPI_RX_POLL_BIT    (1 << 0)
-
-#define EXCEP_FPGA_VERIFY_DATA_BIT (7 * 8)
-#define ERR_STATUS_BIT             (6 * 8)
-#define REG_MASTER_IO_RX_ERR_BIT   (5 * 8)
-#define REG_MASTER_I2C_RX_ERR_BIT  (4 * 8)
-#define REG_MASTER_SPI_RX_ERR_BIT  (3 * 8)
-#define REG_SLAVE_IO_RX_ERR_BIT    (2 * 8)
-#define REG_SLAVE_I2C_RX_ERR_BIT   (1 * 8)
-#define REG_SLAVE_SPI_RX_ERR_BIT   (0 * 8)
-
 #define FPGA_REG_ADDR             0x00
 #define FPGA_REG_MAX_ADD            40
-#define FPGA_BUF_OP_MAX_ADD         64
 
 #define REG_MASTER_VER_YEAR       0x00
 #define REG_MASTER_VER_MON        0x01
@@ -73,15 +57,6 @@
 
 #define REG_SLAVER_ERR_CODE       0xff
 
-#define REG_MASTER_IO_RX_ERR      0x0a
-#define REG_MASTER_I2C_RX_ERR     0x0f
-#define REG_MASTER_SPI_RX_ERR     0x24
-#define REG_SLAVE_IO_RX_ERR       0x16
-#define REG_SLAVE_I2C_RX_ERR      0x1b
-#define REG_SLAVE_SPI_RX_ERR      0x25
-
-#define EXCEP_FPGA_VERIFY_DATA    0xAA
-#define EXCEP_FPGA_FIRSTCHECK_DATA 0x80
 
 #define RST_CONTROL_TIME          1
 #define CLK_TO_SLEEP_CONTROL_TIME 35 /*us*/
@@ -92,20 +67,11 @@
 #define FPGA_POWER_DEBUG          0
 #define FPGA_POWER_DEBUG_MAX_TIMES 5
 
-#define FPGA_MONITOR_WORK_TIME    3000      /*ms*/
-#define FPGA_MONITOR_WORK_SLOWDOWN_TIME (24 * 60 * 60 * 1000 / 2)  /*ms*/
-
-#define FPGA_MONITOR_WORK_MAX_TIME (24 * 60 * 60 * 1000)
-
-#define FPGA_FIFO_ELEMENT_MAX     128
-#define FPGA_FIFO_TIMEOUT_MAX     (100 * 1000 * 1000)
-
+#define FPGA_MONITOR_WORK_TIME    500
 #define MAX_I2C_RETRY_TIME        2
 
 #define FPGA_UEFI_UPDATE_OK       0
 #define FPGA_UEFI_UPDATE_NG       1
-
-#define FPGA_SUSPEND_I2C_ERR_CODE    (-9)
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 #define DECLARE_PROC_OPS(name, open_func, read_func, write_func, release_func) \
@@ -132,7 +98,6 @@
 #endif
 
 typedef enum {
-	GEN_ERR_CODE = 0,
 	RST_CONTROL = 1,
 	POWER_CONTROL,
 	VCC_CORE_CONTROL,
@@ -148,8 +113,6 @@ struct fpga_power_data {
 	int clk_switch_gpio;
 	int sleep_en_gpio;
 	int rst_gpio;
-	int fpga_err_gpio;
-	int fgpa_err_intr_gpio;
 	int vcc_core_gpio;/*1P2*/
 	int vcc_io_gpio;/*1P8*/
 	struct pinctrl *pinctrl;
@@ -159,8 +122,6 @@ struct fpga_power_data {
 	struct pinctrl_state *fpga_clk_switch_sleep;
 	struct pinctrl_state *fpga_rst_ative;
 	struct pinctrl_state *fpga_rst_sleep;
-	struct pinctrl_state *fpga_err_low;
-	struct pinctrl_state *fpga_err_high;
 	/*power*/
 	struct regulator *vcc_core;                    /*power 1.2v 1P2*/
 	struct regulator *vcc_io;                      /*power 1.8 1p8*/
@@ -169,18 +130,12 @@ struct fpga_power_data {
 };
 
 struct fpga_status_t {
-	u64 m_io_rx_err_cnt;
-	u64 m_io_tx_err_cnt;
-	u64 m_i2c_rx_err_cnt;
-	u64 m_i2c_tx_err_cnt;
-	u64 m_spi_rx_err_cnt;
-	u64 m_spi_tx_err_cnt;
-	u64 s_io_rx_err_cnt;
-	u64 s_io_tx_err_cnt;
-	u64 s_i2c_rx_err_cnt;
-	u64 s_i2c_tx_err_cnt;
-	u64 s_spi_rx_err_cnt;
-	u64 s_spi_tx_err_cnt;
+	u64 io_rx_err_cnt;
+	u64 io_tx_err_cnt;
+	u64 i2c_rx_err_cnt;
+	u64 i2c_tx_err_cnt;
+	u64 spi_rx_err_cnt;
+	u64 spi_tx_err_cnt;
 	u64 slave_err_cnt;
 	u64 gpio_status_err_cnt;
 	u64 i2c_status_err_cnt;
@@ -191,7 +146,6 @@ struct fpga_mnt_pri {
 	struct device *dev;
 	struct workqueue_struct *hb_workqueue;
 	struct delayed_work      hb_work;
-	struct work_struct resume_work;
 	struct fpga_status_t all_status;
 	struct fpga_status_t status;
 	struct proc_dir_entry *pr_entry;
@@ -201,13 +155,10 @@ struct fpga_mnt_pri {
 	u32 version_s;
 	int update_flag;
 	int hw_control_rst;
-	u32 fpga_monitor_time;
-	int heartbeat_switch;
 	char name[64];
 	char version[64];
+	char manufacture[64];
 	char fw_path[64];
-	char clk_name[16];
-	char *payload;
 	struct fpga_power_data hw_data;
 	struct mutex mutex;
 	/*debug*/
@@ -219,12 +170,9 @@ struct fpga_mnt_pri {
 	bool bus_ready;
 	bool power_ready;
 	bool health_monitor_support;
-	bool check_recovery_running;
+	struct monitor_data moni_data;
 	struct fpga_exception_data exception_data;
 };
 
-int fpga_powercontrol_vccio(struct fpga_power_data *hw_data, bool on);
-int fpga_powercontrol_vcccore(struct fpga_power_data *hw_data, bool on);
-int fpga_power_uninit(struct fpga_mnt_pri *fpga);
-int fpga_power_init(struct fpga_mnt_pri *fpga);
+
 #endif

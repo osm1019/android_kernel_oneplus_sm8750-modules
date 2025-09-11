@@ -5,7 +5,6 @@
 #include <linux/mutex.h>
 #include <linux/of_gpio.h>
 #include <linux/gpio.h>
-#include <linux/interrupt.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/delay.h>
@@ -19,40 +18,13 @@
 #endif
 #include "fpga_common_api.h"
 #include "fpga_exception.h"
-#include "fpga_mid.h"
-#include "fpga_proc.h"
-#include <linux/time.h>
-#define CREATE_TRACE_POINTS
-#include "fpga_trace.h"
+#include "fpga_healthinfo.h"
+
 #define SMEM_OPLUS_FPGA_PROP  123
 
-#define FAILD_MAX_RETRY_TIMES  2
+static int g_fpga_hw_reset_cnt = 0;
 
-struct fpga_mnt_pri *g_mnt_pri = NULL;
-int g_bf_flag = 0;
-
-static long get_timestamp_ms(void)
-{
-	struct timespec64 now;
-	ktime_get_real_ts64(&now);
-	return timespec64_to_ns(&now) / NSEC_PER_MSEC;
-}
-
-static void u8ArrayToHexString(const uint8_t *array, size_t array_len, char *hex_str, size_t hex_str_len) {
-	int offset = 0;
-	int i = 0;
-	for (i = 0; i < array_len; ++i) {
-		if (offset + 2 < hex_str_len) {
-			offset += snprintf(hex_str + offset, hex_str_len - offset, "%02X", array[i]);
-		} else {
-			FPGA_ERR("Output buffer too small.\n");
-			return;
-		}
-	}
-	hex_str[offset] = '\0';
-}
-
-int fpga_power_init(struct fpga_mnt_pri *fpga)
+static int fpga_power_init(struct fpga_mnt_pri *fpga)
 {
 	int ret = 0;
 
@@ -72,22 +44,28 @@ int fpga_power_init(struct fpga_mnt_pri *fpga)
 				ret = regulator_set_voltage(fpga->hw_data.vcc_core, fpga->hw_data.vcc_core_volt,
 							    fpga->hw_data.vcc_core_volt);
 			} else {
-				ret = regulator_set_voltage(fpga->hw_data.vcc_core, 1120000, 1120000);
+				ret = regulator_set_voltage(fpga->hw_data.vcc_core, 1200000, 1200000);
 			}
 			if (ret) {
 				FPGA_ERR("Regulator vcc_core failed vcc_core rc = %d\n", ret);
 				goto err;
 			}
+			/*
+			ret = regulator_set_load(fpga->hw_data.vcc_core, 200000);
+			if (ret < 0) {
+			    FPGA_ERR("Failed to set vcc_core mode(rc:%d)\n", ret);
+			    goto err;
+			}*/
 		} else {
 			FPGA_ERR("regulator_count_voltages is not support\n");
 		}
 	}
 
-	/* vdd 1.8v*/
+	/* vdd 2.8v*/
 	fpga->hw_data.vcc_io = regulator_get(fpga->dev, "vcc_io");
 
 	if (IS_ERR_OR_NULL(fpga->hw_data.vcc_io)) {
-		FPGA_ERR("Regulator get failed vcc_io, ret = %d\n", ret);
+		FPGA_ERR("Regulator get failed vcc_core, ret = %d\n", ret);
 	} else {
 		if (regulator_count_voltages(fpga->hw_data.vcc_io) > 0) {
 			if (fpga->hw_data.vcc_core_volt) {
@@ -97,9 +75,15 @@ int fpga_power_init(struct fpga_mnt_pri *fpga)
 				ret = regulator_set_voltage(fpga->hw_data.vcc_io, 1800000, 1800000);
 			}
 			if (ret) {
-				FPGA_ERR("Regulator vcc_io failed vcc_io rc = %d\n", ret);
+				FPGA_ERR("Regulator vcc_core failed vcc_core rc = %d\n", ret);
 				goto err;
 			}
+			/*
+			ret = regulator_set_load(fpga->hw_data.vcc_core, 200000);
+			if (ret < 0) {
+			    FPGA_ERR("Failed to set vcc_core mode(rc:%d)\n", ret);
+			    goto err;
+			}*/
 		} else {
 			FPGA_ERR("regulator_count_voltages is not support\n");
 		}
@@ -111,7 +95,7 @@ err:
 	return ret;
 }
 
-int fpga_power_uninit(struct fpga_mnt_pri *fpga)
+static int fpga_power_uninit(struct fpga_mnt_pri *fpga)
 {
 	if (!fpga) {
 		FPGA_ERR("fpga is null\n");
@@ -159,7 +143,7 @@ int fpga_powercontrol_vccio(struct fpga_power_data *hw_data, bool on)
 			FPGA_INFO("disable the vcc_io\n");
 			ret = regulator_disable(hw_data->vcc_io);
 			if (ret) {
-				FPGA_ERR("Regulator vcc_io disable failed rc = %d\n", ret);
+				FPGA_ERR("Regulator vcc_io enable failed rc = %d\n", ret);
 				return ret;
 			}
 		}
@@ -209,7 +193,7 @@ int fpga_powercontrol_vcccore(struct fpga_power_data *hw_data, bool on)
 			FPGA_INFO("disable the vcc_io\n");
 			ret = regulator_disable(hw_data->vcc_core);
 			if (ret) {
-				FPGA_ERR("Regulator vcc_core disable failed rc = %d\n", ret);
+				FPGA_ERR("Regulator vcc_core enable failed rc = %d\n", ret);
 				return ret;
 			}
 		}
@@ -229,437 +213,711 @@ int fpga_powercontrol_vcccore(struct fpga_power_data *hw_data, bool on)
 }
 EXPORT_SYMBOL(fpga_powercontrol_vcccore);
 
-static void fpga_sw_rst(struct fpga_mnt_pri *mnt_pri)
+static void fpga_rst_control(struct fpga_mnt_pri *mnt_pri)
 {
 	int ret = 0;
 	struct fpga_power_data *pdata = NULL;
-	struct fpga_status_t *status = NULL;
 
 	FPGA_INFO("enter\n");
-	fpga_poll_wakeup(mnt_pri,EXCEP_SOFT_REST_ERR);
+
 	if (!mnt_pri) {
 		FPGA_ERR("mnt_pri is null\n");
 		return;
 	}
-	pdata = &mnt_pri->hw_data;
-	status = &mnt_pri->status;
 
-	status->m_io_rx_err_cnt = 0;
-	status->m_i2c_rx_err_cnt = 0;
-	status->m_spi_rx_err_cnt = 0;
-	status->s_io_rx_err_cnt = 0;
-	status->s_i2c_rx_err_cnt = 0;
-	status->s_spi_rx_err_cnt = 0;
+	pdata = &mnt_pri->hw_data;
+
+#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
+	fpga_call_notifier(FPGA_RST_START, NULL);
+#endif
 
 	ret = gpio_direction_output(pdata->rst_gpio, 0);
+	ret |= pinctrl_select_state(pdata->pinctrl, pdata->fpga_rst_sleep);
 	usleep_range(RST_CONTROL_TIME, RST_CONTROL_TIME);
 
 	ret |= gpio_direction_output(pdata->rst_gpio, 1);
+	ret |= pinctrl_select_state(pdata->pinctrl, pdata->fpga_rst_ative);
+	usleep_range(RST_TO_NORMAL_TIME, RST_TO_NORMAL_TIME);
 
+#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
+	fpga_call_notifier(FPGA_RST_END, NULL);
+#endif
 	mnt_pri->hw_control_rst = ret;
 	return;
 }
 
-static void fpga_hw_rst(struct fpga_mnt_pri *mnt_pri)
+int fpga_i2c_read(struct fpga_mnt_pri *mnt_pri,
+		  u8 reg, u8 *data, size_t len)
 {
-	struct fpga_status_t *status = NULL;
-	if (!mnt_pri) {
-		FPGA_ERR("mnt_pri is null\n");
-		return;
+	struct i2c_client *client = mnt_pri->client;
+	struct i2c_msg msg[2];
+	u8 buf[1];
+	int ret;
+	unsigned char retry;
+
+	buf[0] = reg;
+
+	msg[0].addr = client->addr;
+	msg[0].flags = 0;
+	msg[0].len = 0x01;
+	msg[0].buf = &buf[0];
+
+	msg[1].addr = client->addr;;
+	msg[1].flags = I2C_M_RD;
+	msg[1].len = len;
+	msg[1].buf = data;
+
+	for (retry = 0; retry < MAX_I2C_RETRY_TIME; retry++) {
+		if (i2c_transfer(client->adapter, msg, 2) == 2) {
+			ret = len;
+			break;
+		}
+		msleep(20);
 	}
 
-	status = &mnt_pri->status;
-	status->m_io_rx_err_cnt = 0;
-	status->m_i2c_rx_err_cnt = 0;
-	status->m_spi_rx_err_cnt = 0;
-	status->s_io_rx_err_cnt = 0;
-	status->s_i2c_rx_err_cnt = 0;
-	status->s_spi_rx_err_cnt = 0;
-	mnt_pri->power_ready = false;
+	if (retry == MAX_I2C_RETRY_TIME) {
+		FPGA_ERR("%s: I2C read over retry limit\n", __func__);
+		ret = -EIO;
+		return ret;
+	}
 
-	// rst: vcccore down, then delay 1ms, vccio down
-	fpga_powercontrol_vcccore(&mnt_pri->hw_data, false);
-	mdelay(1);   // mdelay is accurate, msleep is not aacurete(cpu schedule)
-	fpga_powercontrol_vccio(&mnt_pri->hw_data, false);
-
-	msleep(POWER_CONTROL_TIME);
-
-	fpga_powercontrol_vccio(&mnt_pri->hw_data, true);
-	mdelay(1);
-	fpga_powercontrol_vcccore(&mnt_pri->hw_data, true);
-	msleep(50); // hw_rst then follow sw_rst, new request must sleep 50ms
-
-	mnt_pri->power_ready = true;
+	return ret;
 }
 
+int fpga_i2c_write(struct fpga_mnt_pri *mnt_pri,
+		   u8 reg, u8 *data, size_t len)
+{
+	struct i2c_client *client = mnt_pri->client;
+	struct i2c_msg msg[1];
+	int ret;
+	unsigned char retry;
+
+	u8 *buf = kzalloc(len + 1, GFP_KERNEL);
+	if (buf == NULL) {
+		FPGA_ERR("buf alloc failed! \n");
+		return -ENOMEM;
+	}
+
+	buf[0] = reg;
+	memcpy(buf + 1, data, len);
+
+	msg[0].addr = client->addr;
+	msg[0].flags = 0;
+	msg[0].len = len + 1;
+	msg[0].buf = buf;
+
+
+	for (retry = 0; retry < MAX_I2C_RETRY_TIME; retry++) {
+		if (i2c_transfer(client->adapter, msg, 1) == 1) {
+			ret = len + 1;
+			break;
+		}
+		msleep(20);
+	}
+
+	if (retry == MAX_I2C_RETRY_TIME) {
+		FPGA_ERR("%s: I2C write over retry limit\n", __func__);
+		ret = -EIO;
+		return ret;
+	}
+	kfree(buf);
+	return ret;
+}
 /*
 0x0b/0x10/0x17/0x1c不为2
 0x0d/0x12/0x19/0x1e不为1
 0x0c/0x0e/0x11/0x13/0x18/0x1A/0x1D/0x1F不为0
-0x0a/0x0f/0x16/0x1b为0x0A  修改阈值达到0x0A(大于等于)，固件就上报异常中断，我们检测达到后进行处理
-0x24/0x25为0x0A则触发复位---用于静电测试的临时版本
+0x0a/0x0f/0x16/0x1b为0xFF
+0x24/0x25为0xFF则触发复位---用于静电测试的临时版本
 */
-static int fpga_reg_compare(u8 *buf, int len)
+
+static int fpga_check_reg_buffer(struct fpga_mnt_pri *mnt_pri, u8 *buf, int len)
 {
+	int i = 0;
 	int ret = 0;
 
 	if ((buf[0x0b] == 2) && (buf[0x10] == 2) && (buf[0x17] == 2) && (buf[0x1c] == 2)
 		&& (buf[0x0d] == 1) && (buf[0x12] == 1) && (buf[0x19] == 1) && (buf[0x1e] == 1)
 		&& (buf[0x0c] == 0) && (buf[0x0e] == 0) && (buf[0x11] == 0) && (buf[0x13] == 0)
 		&& (buf[0x18] == 0) && (buf[0x1a] == 0) && (buf[0x1d] == 0) && (buf[0x1f] == 0)
-		&& (buf[0x0a] < 0x0a) && (buf[0x0f] < 0x0a) && (buf[0x16] < 0x0a)
-		&& (buf[0x1b] < 0x0a) && (buf[0x24] < 0x0a) && (buf[0x25] < 0x0a)) {
-		ret = 0;
-	} else {
-		ret = 1;
+		&& (buf[0x0a] != 0xff) && (buf[0x0f] != 0xff) && (buf[0x16] != 0xff)
+		&& (buf[0x1b] != 0xff) && (buf[0x24] != 0xff) && (buf[0x25] != 0xff)) {
+		return 0;
 	}
-
-	return ret;
-}
-
-static void fpga_find_code_error_increase(struct fpga_mnt_pri *mnt_pri, u8 *buf)
-{
-	struct fpga_status_t *status;
-	struct fpga_status_t *all_status;
-	unsigned char err_status = EXCEP_FPGA_FIRSTCHECK_DATA;
-	uint64_t wakeup_param = 0;
-	char hex_str[FPGA_REG_MAX_ADD * 2 + 1] = {0};
-
-	if (!mnt_pri || !buf) {
-		FPGA_ERR("error:mnt_pri.\n");
-		return;
-	}
-
-	status = &mnt_pri->status;
-	all_status = &mnt_pri->all_status;
-
-	if ((status->m_io_rx_err_cnt != buf[REG_MASTER_IO_RX_ERR]) ||
-		(status->m_i2c_rx_err_cnt != buf[REG_MASTER_I2C_RX_ERR]) ||
-		(status->m_spi_rx_err_cnt != buf[REG_MASTER_SPI_RX_ERR]) ||
-		(status->s_io_rx_err_cnt != buf[REG_SLAVE_IO_RX_ERR]) ||
-		(status->s_i2c_rx_err_cnt != buf[REG_SLAVE_I2C_RX_ERR]) ||
-		(status->s_spi_rx_err_cnt != buf[REG_SLAVE_SPI_RX_ERR])) {
-		FPGA_ERR("Fpga find error code.\n");
-
-		u8ArrayToHexString(buf, FPGA_REG_MAX_ADD, hex_str, sizeof(hex_str));
-		trace_fpga_stat(get_timestamp_ms(), 0, 0, hex_str, 0, 0, 0, 1, 0, 0, 0, 0);
-		fpga_exception_report(EXCEP_FAULT_CODE_RECORD_ERR);
-
-		err_status |= (status->m_io_rx_err_cnt != buf[REG_MASTER_IO_RX_ERR]) ? FPGA_M_IO_RX_POLL_BIT : 0;
-		err_status |= (status->m_i2c_rx_err_cnt != buf[REG_MASTER_I2C_RX_ERR]) ? FPGA_M_I2C_RX_POLL_BIT : 0;
-		err_status |= (status->m_spi_rx_err_cnt != buf[REG_MASTER_SPI_RX_ERR]) ? FPGA_M_SPI_RX_POLL_BIT : 0;
-		err_status |= (status->s_io_rx_err_cnt != buf[REG_SLAVE_IO_RX_ERR]) ? FPGA_S_IO_RX_POLL_BIT : 0;
-		err_status |= (status->s_i2c_rx_err_cnt != buf[REG_SLAVE_I2C_RX_ERR]) ? FPGA_S_I2C_RX_POLL_BIT : 0;
-		err_status |= (status->s_spi_rx_err_cnt != buf[REG_SLAVE_SPI_RX_ERR]) ? FPGA_S_SPI_RX_POLL_BIT : 0;
-
-		wakeup_param |= (uint64_t)EXCEP_FPGA_VERIFY_DATA << EXCEP_FPGA_VERIFY_DATA_BIT;
-		wakeup_param |= (uint64_t)err_status << ERR_STATUS_BIT;
-		wakeup_param |= (uint64_t)buf[REG_MASTER_IO_RX_ERR] << REG_MASTER_IO_RX_ERR_BIT;
-		wakeup_param |= (uint64_t)buf[REG_MASTER_I2C_RX_ERR] << REG_MASTER_I2C_RX_ERR_BIT;
-		wakeup_param |= (uint64_t)buf[REG_MASTER_SPI_RX_ERR] << REG_MASTER_SPI_RX_ERR_BIT;
-		wakeup_param |= (uint64_t)buf[REG_SLAVE_IO_RX_ERR] << REG_SLAVE_IO_RX_ERR_BIT;
-		wakeup_param |= (uint64_t)buf[REG_SLAVE_I2C_RX_ERR] << REG_SLAVE_I2C_RX_ERR_BIT;
-		wakeup_param |= (uint64_t)buf[REG_SLAVE_SPI_RX_ERR];
-		fpga_poll_wakeup(mnt_pri, wakeup_param);
-		FPGA_ERR("fail:%*ph\n", FPGA_REG_MAX_ADD, buf);
-	}
-
-	status->m_io_rx_err_cnt = buf[REG_MASTER_IO_RX_ERR];
-	status->m_i2c_rx_err_cnt = buf[REG_MASTER_I2C_RX_ERR];
-	status->m_spi_rx_err_cnt = buf[REG_MASTER_SPI_RX_ERR];
-	status->s_io_rx_err_cnt = buf[REG_SLAVE_IO_RX_ERR];
-	status->s_i2c_rx_err_cnt = buf[REG_SLAVE_I2C_RX_ERR];
-	status->s_spi_rx_err_cnt = buf[REG_SLAVE_SPI_RX_ERR];
-	return;
-}
-static bool fpga_check_code_error_full(struct fpga_mnt_pri *mnt_pri, u8 *buf)
-{
-	struct fpga_status_t *status;
-	struct fpga_status_t *all_status;
-	status = &mnt_pri->status;
-	all_status = &mnt_pri->all_status;
-
-	if (!mnt_pri || !buf) {
-		FPGA_ERR("error:mnt_pri.\n");
-		return false;
-	}
-	if ((0x0a <= buf[REG_MASTER_IO_RX_ERR]) ||
-		(0x0a <= buf[REG_MASTER_I2C_RX_ERR]) ||
-		(0x0a <= buf[REG_MASTER_SPI_RX_ERR]) ||
-		(0x0a <= buf[REG_SLAVE_IO_RX_ERR]) ||
-		(0x0a <= buf[REG_SLAVE_I2C_RX_ERR]) ||
-		(0x0a <= buf[REG_SLAVE_SPI_RX_ERR])) {
-		FPGA_ERR("Fpga find error code --> full.\n");
-		return true;
-	}
-	return false;
-}
-
-static bool fpga_check_i2c_and_comp_reg(struct fpga_mnt_pri *mnt_pri, u8 *buf)
-{
-	int retry_times = 0;
-	int ret = 0;
-	if (!mnt_pri) {
-		FPGA_ERR("error:mnt_pri.\n");
-		return false;
-	}
-	for (retry_times = 0; retry_times < FAILD_MAX_RETRY_TIMES; retry_times++) {
-		if (retry_times == 0) {
-			msleep(10);  // first time sleep 10ms
-		} else {
-			msleep(5);  // other sleep 5ms
-		}
-		memset(buf, 0, 40);
+	/*sw reset*/
+	for (i = 0; i < 3; i ++) {
+		FPGA_INFO("%s: enter sw reset-->%d.\n", __func__, i);
+		if (g_fpga_hw_reset_cnt < 3)
+			fpga_rst_control(mnt_pri);
+		msleep(500);
+		memset(buf, 0, sizeof(buf));
 		ret = fpga_i2c_read(mnt_pri, FPGA_REG_ADDR, buf, FPGA_REG_MAX_ADD);
-		if (ret >= 0) {
-			if (fpga_reg_compare(buf, FPGA_REG_MAX_ADD) == 0) {
-				fpga_find_code_error_increase(mnt_pri, buf);
-				FPGA_ERR("i2c ok,compare reg ok, retry_times %d.\n",retry_times);
-				return true;
-			} else {
-				FPGA_ERR("i2c ok,but compare reg fail,retry_times %d.\n",retry_times);
-				FPGA_ERR("fail:%*ph\n", FPGA_REG_MAX_ADD, buf);
-			}
-		} else if (ret == FPGA_SUSPEND_I2C_ERR_CODE) {
-			FPGA_INFO("current status is suspend, ignore this check, return true!\n");
-			return true;
-		} else {
-			FPGA_ERR("i2c read fail, retry_times %d.\n",retry_times);
+		if (ret < 0) {
+			FPGA_ERR("%s: after sw reset, fpga_i2c_read error.\n", __func__);
+			continue;
+		}
+		FPGA_INFO("reg:%*ph\n", FPGA_REG_MAX_ADD, buf);
+		if ((buf[0x0b] == 2) && (buf[0x10] == 2) && (buf[0x17] == 2) && (buf[0x1c] == 2)
+			&& (buf[0x0d] == 1) && (buf[0x12] == 1) && (buf[0x19] == 1) && (buf[0x1e] == 1)
+			&& (buf[0x0c] == 0) && (buf[0x0e] == 0) && (buf[0x11] == 0) && (buf[0x13] == 0)
+			&& (buf[0x18] == 0) && (buf[0x1a] == 0) && (buf[0x1d] == 0) && (buf[0x1f] == 0)
+			&& (buf[0x0a] != 0xff) && (buf[0x0f] != 0xff) && (buf[0x16] != 0xff)
+			&& (buf[0x1b] != 0xff) && (buf[0x24] != 0xff) && (buf[0x25] != 0xff)) {
+			return 0;
 		}
 	}
-
-	FPGA_ERR("i2c read fail or reg check fail.\n");
-	return false;
-}
-
-static bool fpga_check_and_recovery(struct fpga_mnt_pri *mnt_pri)
-{
-	u8 buf[FPGA_REG_MAX_ADD] = {0};
-	char hex_str[FPGA_REG_MAX_ADD * 2 + 1] = {0};
-	int ret;
-	bool need_rest = false;
-	bool recovery_result = true;
-	int sw_retry_times = 0;
-	int hw_retry_times = 0;
-	if (!mnt_pri) {
-		FPGA_ERR("fpga_check_and_recovery mnt_pri is NULL and return!\n");
-		return false;
-	}
-
-	mutex_lock(&mnt_pri->mutex);    /* mutex_lock here will block here if another thread can not get mutex */
-	mnt_pri->check_recovery_running = true;
-	ret = fpga_i2c_read(mnt_pri, FPGA_REG_ADDR, buf, FPGA_REG_MAX_ADD);
-	u8ArrayToHexString(buf, FPGA_REG_MAX_ADD, hex_str, sizeof(hex_str));
-	if (ret == FPGA_SUSPEND_I2C_ERR_CODE) {
-		FPGA_INFO("current fpga is suspend status, ignore this check!\n");
-		mnt_pri->check_recovery_running = false;
-		mutex_unlock(&mnt_pri->mutex);
-		return true;
-	}
-	if (ret < 0) {
-		FPGA_ERR("fpga_i2c_read fail need reset!\n");
-		trace_fpga_stat(get_timestamp_ms(), 0, 0, hex_str, 1, 0, 0, 0, 0, 0, 0, 0);
-		fpga_poll_wakeup(mnt_pri,EXCEP_I2C_READ_ERR);
-		need_rest = true;
-	}
-	do {
-		if (need_rest)
-		{
-			fpga_exception_report(EXCEP_SOFT_REST_ERR);
-
-			for (sw_retry_times = 0; sw_retry_times < FAILD_MAX_RETRY_TIMES; sw_retry_times++) {
-#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
-				fpga_call_notifier(FPGA_RST_START, NULL);
-#endif
-				trace_fpga_stat(get_timestamp_ms(), 0, 0, hex_str, 0, 1, 0, 0, 0, 0, 0, 0);
-				msleep(20);  // send start notify then sleep 20ms, charger stop trans at most 20ms, then reset
-				fpga_sw_rst(mnt_pri);
-				ret = fpga_check_i2c_and_comp_reg(mnt_pri, buf);
-				if (ret == false) {
-					FPGA_ERR("SWRST: [%d]rst check reg failed,continue reset.\n", sw_retry_times);
-				} else {
-#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
-					fpga_call_notifier(FPGA_RST_END, NULL);
-#endif
-					FPGA_ERR("SWRST: [%d]rst check reg ok, break!\n",sw_retry_times);
-					recovery_result = true;   // recovery ok
-					break;
-				}
-			}
-			FPGA_ERR("before hard reset g_bf_flag is %d.\n", g_bf_flag);
-			if ((sw_retry_times == FAILD_MAX_RETRY_TIMES) && (g_bf_flag != 1)) { //hw reset
-				fpga_exception_report(EXCEP_HARD_REST_ERR);
-				for (hw_retry_times = 0; hw_retry_times < FAILD_MAX_RETRY_TIMES; hw_retry_times++) {
-					FPGA_ERR("sw retry over max retry times and enter hw reset!\n");
-#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
-					fpga_call_notifier(FPGA_RST_START, NULL);
-#endif
-					msleep(20);  // send start notify then sleep 20ms, charger stop trans at most 20ms, then reset
-					fpga_hw_rst(mnt_pri);
-					fpga_sw_rst(mnt_pri);
-					trace_fpga_stat(get_timestamp_ms(), 0, 0, hex_str, 0, 0, 1, 0, 0, 0, 0, 0);
-					fpga_poll_wakeup(mnt_pri,EXCEP_HARD_REST_ERR);
-
-					ret = fpga_check_i2c_and_comp_reg(mnt_pri, buf);
-					if (ret == false) {
-						FPGA_ERR("HWRST: [%d]rst check reg failed,continue reset.\n", hw_retry_times);
-					} else {
-#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
-						fpga_call_notifier(FPGA_RST_END, NULL);
-#endif
-						FPGA_ERR("HWRST: [%d]rst check reg ok, break!\n",hw_retry_times);
-						recovery_result = true;    // recovery ok
-						break;
-					}
-				}
-			}
-			if (hw_retry_times == FAILD_MAX_RETRY_TIMES) {
-				FPGA_ERR("!!! after hw rest,fpga offline.\n");
-				trace_fpga_stat(get_timestamp_ms(), 0, 0, hex_str, 0, 0, 0, 0, 1, 0, 0, 0);
-				fpga_exception_report(EXCEP_HARD_RESET_NOT_RECOVERY_ERR);
-				fpga_poll_wakeup(mnt_pri, EXCEP_HARD_RESET_NOT_RECOVERY_ERR);
-				recovery_result = false;
-				break;
-			}
-		} else {
-			FPGA_INFO("reg:%*ph\n", FPGA_REG_MAX_ADD, buf);
-			fpga_find_code_error_increase(mnt_pri, buf);
-			if (fpga_check_code_error_full(mnt_pri, buf)) {
-				need_rest = true;
-				FPGA_ERR("code_error_full ,need to reset\n");
-				continue;
-			}
-			if (fpga_reg_compare(buf, FPGA_REG_MAX_ADD) != 0) {
-				trace_fpga_stat(get_timestamp_ms(), 0, 0, hex_str, 0, 0, 0, 0, 1, 0, 0, 0);
-				FPGA_ERR("fpga_reg_compare fail need to reset\n");
-				need_rest = true;
-				continue;
-			}
+	/*hw reset*/
+	for (i = 0; i < 3; i ++) {
+		FPGA_INFO("%s: enter hw reset-->%d.\n", __func__, i);
+		if (g_fpga_hw_reset_cnt < 3) {
+			fpga_powercontrol_vccio(&mnt_pri->hw_data, false);
+			fpga_powercontrol_vcccore(&mnt_pri->hw_data, false);
+			msleep(POWER_CONTROL_TIME);
+			fpga_powercontrol_vcccore(&mnt_pri->hw_data, true);
+			fpga_powercontrol_vccio(&mnt_pri->hw_data, true);
+			msleep(10);
+			fpga_rst_control(mnt_pri);
 		}
-		need_rest = false;
-	} while(need_rest);
+		msleep(500);
 
-	mnt_pri->check_recovery_running = false;
-	mutex_unlock(&mnt_pri->mutex);
-
-	return recovery_result;
+		memset(buf, 0, sizeof(buf));
+		ret = fpga_i2c_read(mnt_pri, FPGA_REG_ADDR, buf, FPGA_REG_MAX_ADD);
+		if (ret < 0) {
+			FPGA_ERR("%s: after hw reset, fpga_i2c_read error.\n", __func__);
+			continue;
+		}
+		FPGA_INFO("reg:%*ph\n", FPGA_REG_MAX_ADD, buf);
+		if ((buf[0x0b] == 2) && (buf[0x10] == 2) && (buf[0x17] == 2) && (buf[0x1c] == 2)
+			&& (buf[0x0d] == 1) && (buf[0x12] == 1) && (buf[0x19] == 1) && (buf[0x1e] == 1)
+			&& (buf[0x0c] == 0) && (buf[0x0e] == 0) && (buf[0x11] == 0) && (buf[0x13] == 0)
+			&& (buf[0x18] == 0) && (buf[0x1a] == 0) && (buf[0x1d] == 0) && (buf[0x1f] == 0)
+			&& (buf[0x0a] != 0xff) && (buf[0x0f] != 0xff) && (buf[0x16] != 0xff)
+			&& (buf[0x1b] != 0xff) && (buf[0x24] != 0xff) && (buf[0x25] != 0xff)) {
+			return 0;
+		}
+	}
+	return ret;
 }
 
 static void fpga_heartbeat_work(struct work_struct *work)
 {
 	struct fpga_mnt_pri *mnt_pri = container_of(work, struct fpga_mnt_pri, hb_work.work);
 	u8 buf[FPGA_REG_MAX_ADD] = {0};
-	bool need_slowdown = false;
-	static int fpga_heartbeat_time = 0;
+	int ret;
+	int i = 0;
+	int sw_retry_times = 0;
+	int hw_retry_times = 0;
+	char payload[1024] = {0x00};
+	char *result = NULL;
 
-	if (mnt_pri->check_recovery_running) {
-		/* heartbeat work receive the stop signal, return */
-		FPGA_INFO("check is running and this time cancled and goto next queued delayed work!\n");
+	if ((!mnt_pri->bus_ready) || (!mnt_pri->power_ready)) {
+		FPGA_INFO("%s, bus not ready! exit\n", __func__);
 		goto out;
 	}
 
-	fpga_heartbeat_time++;
-
-	if (!mnt_pri || (!mnt_pri->bus_ready) || (!mnt_pri->power_ready)) {
-		FPGA_INFO("bus not ready! exit\n");
-		goto out;
+	for (i = 0; i < 3; i++) {
+		memset(buf, 0, sizeof(buf));
+		ret = fpga_i2c_read(mnt_pri, FPGA_REG_ADDR, buf, FPGA_REG_MAX_ADD);
+		if (ret > 0) {
+			break;
+		}
+		if (g_fpga_hw_reset_cnt < 3)
+			fpga_rst_control(mnt_pri);
+		msleep(500);
 	}
-#if FPGA_POWER_DEBUG
-	if (mnt_pri->power_debug_work_count <= FPGA_POWER_DEBUG_MAX_TIMES) {
-		FPGA_INFO("%d.\n", mnt_pri->power_debug_work_count);
-		goto out;
+	sw_retry_times = i;
+	if (sw_retry_times == 3) {
+		FPGA_ERR("fpga i2c read failed: Need hw reset.\n");
+		for (i = 0; i < 3; i++) {
+			if (g_fpga_hw_reset_cnt < 3) {
+				fpga_powercontrol_vccio(&mnt_pri->hw_data, false);
+				fpga_powercontrol_vcccore(&mnt_pri->hw_data, false);
+				msleep(POWER_CONTROL_TIME);
+				fpga_powercontrol_vcccore(&mnt_pri->hw_data, true);
+				fpga_powercontrol_vccio(&mnt_pri->hw_data, true);
+				msleep(10);
+				fpga_rst_control(mnt_pri);
+			}
+			msleep(500);
+			memset(buf, 0, sizeof(buf));
+			ret = fpga_i2c_read(mnt_pri, FPGA_REG_ADDR, buf, FPGA_REG_MAX_ADD);
+			if (ret > 0) {
+				break;
+			}
+		}
+		hw_retry_times = i;
+		if (hw_retry_times == 3) {
+			g_fpga_hw_reset_cnt += 1;
+			FPGA_ERR("fpga i2c read failed: hw reset also failed.\n");
+			fpga_kevent_fb(payload, 1024, FPGA_FB_BUS_TRANS_TYPE,
+					"NULL$$EventField@@fpgaStatusRead$$i2creadret@@%d", ret);
+			goto out;
+		}
 	}
-#endif
 
-	FPGA_INFO("fpga_heartbeat_work check and recovery.\n");
-	if (!fpga_check_and_recovery(mnt_pri)) {
-		// recovery(sw reset & hw reset) not ok, need to slowdown
-		need_slowdown = true;
+	FPGA_INFO("reg:%*ph\n", FPGA_REG_MAX_ADD, buf);
+	ret = fpga_check_reg_buffer(mnt_pri, buf, FPGA_REG_MAX_ADD);
+	if (ret == 0) {
+		mnt_pri->version_m = buf[0] << 24 | buf[1] << 16 | buf[2] << 8 | buf[3];
+		mnt_pri->version_s = buf[4] << 24 | buf[5] << 16 | buf[6] << 8 | buf[7];
+		g_fpga_hw_reset_cnt = 0;
+	} else {
+		g_fpga_hw_reset_cnt += 1;
+		result = (char *)kzalloc(1024, GFP_KERNEL);
+		if (!result) {
+			FPGA_INFO("%s: kzalloc error\n", __func__);
+			fpga_kevent_fb(payload, 1024, FPGA_FB_REG_ERR_TYPE,
+						"NULL$$EventField@@fpgaRegStatusRead$$kzalloc@@%d", ret);
+		} else {
+			ret = snprintf(result, 1023, "NULL$$EventField@@fpgaRegStatusRead$$reg@@%*ph", FPGA_REG_MAX_ADD, buf);
+			fpga_kevent_fb(payload, 1024, FPGA_FB_REG_ERR_TYPE, result, ret);
+			kfree(result);
+		}
 	}
 
 out:
-	if (fpga_heartbeat_time >= 600) {//5min
-		FPGA_INFO("heartbeat time beyond 5min,reg:%*ph\n", FPGA_REG_MAX_ADD, buf);
-		fpga_heartbeat_time = 0;
-	}
-
-	if ((mnt_pri->fpga_monitor_time > 0) && (mnt_pri->fpga_monitor_time < FPGA_MONITOR_WORK_MAX_TIME)) {
-		queue_delayed_work(mnt_pri->hb_workqueue, &mnt_pri->hb_work, msecs_to_jiffies(mnt_pri->fpga_monitor_time));
-		return;
-	}
-
-	if (need_slowdown) {
-		queue_delayed_work(mnt_pri->hb_workqueue, &mnt_pri->hb_work, msecs_to_jiffies(FPGA_MONITOR_WORK_SLOWDOWN_TIME));
-	} else {
-		queue_delayed_work(mnt_pri->hb_workqueue, &mnt_pri->hb_work, msecs_to_jiffies(FPGA_MONITOR_WORK_TIME));
-	}
+	queue_delayed_work(mnt_pri->hb_workqueue, &mnt_pri->hb_work, msecs_to_jiffies(FPGA_MONITOR_WORK_TIME));
 	return;
 }
 
-int is_fpga_work_okay(void)
+static int fpga_info_func(struct seq_file *s, void *v)
 {
-	int ret;
-	bool result = false;
-	FPGA_INFO("is_fpga_work_okay enter!\n");
+	struct fpga_mnt_pri *info = (struct fpga_mnt_pri *) s->private;
 
-	if (!g_mnt_pri) {
-		FPGA_ERR("g_mnt_pri is NULL .\n");
-		return -1;
-	}
-	if ((!g_mnt_pri->bus_ready) || (!g_mnt_pri->power_ready)) {
-		FPGA_ERR("fpga is not ready to work.\n");
-		return -1;
-	}
 
-	result = fpga_check_and_recovery(g_mnt_pri);
-	if (result) {
-		FPGA_INFO("is_fpga_work_okay fpga result ok!\n");
-		ret = 0;
-	} else {
-		FPGA_ERR("is_fpga_work_okay fpga result fail!\n");
-		ret = -1;
-	}
-	FPGA_INFO("is_fpga_work_okay end!\n");
+	seq_printf(s, "Device m version:\t\t0x%08x\n", info->version_m);
+	seq_printf(s, "Device s version:\t\t0x%08x\n", info->version_s);
 
-	return ret;
-}
-EXPORT_SYMBOL(is_fpga_work_okay);
+	seq_printf(s, "Device manufacture:\t\t%s\n", info->manufacture);
 
-#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
-static int oplus_fpga_monitor_state_change(struct notifier_block *nb, unsigned long ev, void *v)
-{
-	struct fpga_power_data *pdata = NULL;
+	seq_printf(s, "Device fw_path:\t\t%s\n", info->fw_path);
 
-	FPGA_ERR(" call, event is %lu.\n", ev);
-
-	if (!g_mnt_pri) {
-		FPGA_ERR("g_mnt_pri is null\n ");
-		return 0;
-	}
-	pdata = &g_mnt_pri->hw_data;
-
-	if (ev == FPGA_GEN_HWRST) {
-		FPGA_ERR("FPGA_GEN_HWRST...\n ");
-		fpga_powercontrol_vcccore(pdata, false);
-		mdelay(1);
-		fpga_powercontrol_vccio(pdata, false);
-	}
-	if (ev == FPGA_GEN_SWRST) {
-		FPGA_ERR("FPGA_GEN_SWRST...\n ");
-		gpio_direction_output(pdata->rst_gpio, 0);
-		pinctrl_select_state(pdata->pinctrl, pdata->fpga_rst_sleep);
-	}
-	if (ev == FPGA_GEN_ERRCODE) {
-		FPGA_INFO("FPGA_GEN_ERRCODE...\n ");
-		fpga_gen_errcode(g_mnt_pri);
-	}
 	return 0;
 }
 
-static struct notifier_block oplus_fpga_monitor_state_notifier_block = {
-	.notifier_call = oplus_fpga_monitor_state_change,
-};
+static int fpga_info_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, fpga_info_func, PDE_DATA(inode));
+}
+
+DECLARE_PROC_OPS(fpga_info_node_fops, fpga_info_open, seq_read, NULL, single_release);
+
+static ssize_t proc_fpga_status_read(struct file *file,
+				     char __user *user_buf, size_t count, loff_t *ppos)
+{
+	int ret = 0;
+	struct fpga_mnt_pri *mnt_pri = PDE_DATA(file_inode(file));
+	char page[PAGESIZE] = {0};
+	int status = 0;
+	u8 buf[FPGA_REG_MAX_ADD] = {0};
+
+	if (!mnt_pri) {
+		FPGA_ERR("%s error:file_inode.\n", __func__);
+		return ret;
+	}
+
+	memset(buf, 0, sizeof(buf));
+	ret = fpga_i2c_read(mnt_pri, FPGA_REG_ADDR, buf, FPGA_REG_MAX_ADD);
+	if (ret < 0) {
+		FPGA_ERR("fpga i2c read failed: ret %d\n", ret);
+		status = 1;
+	} else {
+		if (buf[REG_SLAVER_ERR] == REG_SLAVER_ERR_CODE) {
+			status = 1;
+		} else {
+			status = 0;
+		}
+	}
+
+	snprintf(page, PAGESIZE - 1, "%d\n", status);
+
+	ret = simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
+	return ret;
+}
+
+DECLARE_PROC_OPS(fpga_status_node_fops, simple_open, proc_fpga_status_read, NULL, NULL);
+
+static ssize_t fpga_hw_control_read(struct file *file,
+				     char __user *user_buf, size_t count, loff_t *ppos)
+{
+	int ret = 0;
+	struct fpga_mnt_pri *mnt_pri = PDE_DATA(file_inode(file));
+	char page[PAGESIZE] = {0};
+	int status = 1;
+
+	if (!mnt_pri) {
+		FPGA_ERR("%s error:file_inode.\n", __func__);
+		snprintf(page, PAGESIZE - 1, "%d\n", status);
+		return ret;
+	}
+
+	snprintf(page, PAGESIZE - 1, "%d\n", mnt_pri->hw_control_rst);
+	mnt_pri->hw_control_rst = 0;
+
+	ret = simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
+	return ret;
+}
+
+static ssize_t fpga_hw_control_write(struct file *file,
+				     const char __user *buffer, size_t count, loff_t *ppos)
+{
+	int ret = 0;
+	int mode = 0;
+	int voltage = 0;
+	char buf[6] = {0};
+	struct fpga_mnt_pri *mnt_pri = PDE_DATA(file_inode(file));
+	struct fpga_power_data *pdata = NULL;
+
+	if (!mnt_pri) {
+		FPGA_ERR("%s error:file_inode.\n", __func__);
+		mnt_pri->hw_control_rst = 1;
+		return count;
+	}
+
+	pdata = &mnt_pri->hw_data;
+
+	if (count > 6) {
+		FPGA_ERR("%s error:count:%lu.\n", __func__, count);
+		mnt_pri->hw_control_rst = 1;
+		return count;
+	}
+
+	if (copy_from_user(buf, buffer, count)) {
+		FPGA_ERR("%s: read proc input error.\n", __func__);
+		mnt_pri->hw_control_rst = 1;
+		return count;
+	}
+
+	sscanf(buf, "%d,%d", &mode, &voltage);
+
+	FPGA_INFO("mode:%d,voltage %d\n", mode, voltage);
+
+	mutex_lock(&mnt_pri->mutex);
+	switch (mode) {
+	case RST_CONTROL:
+		fpga_rst_control(mnt_pri);
+		break;
+
+	case POWER_CONTROL:
+#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
+		fpga_call_notifier(FPGA_RST_START, NULL);
 #endif
+		ret = fpga_powercontrol_vccio(&mnt_pri->hw_data, false);
+		ret |= fpga_powercontrol_vcccore(&mnt_pri->hw_data, false);
+		msleep(500);
+		ret |= fpga_powercontrol_vcccore(&mnt_pri->hw_data, true);
+		ret |= fpga_powercontrol_vccio(&mnt_pri->hw_data, true);
+		usleep_range(RST_TO_NORMAL_TIME, RST_TO_NORMAL_TIME);
+#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
+		fpga_call_notifier(FPGA_RST_END, NULL);
+#endif
+		FPGA_INFO("POWER_CONTROL\n");
+		break;
+
+	case VCC_CORE_CONTROL:
+		mnt_pri->hw_data.vcc_core_volt = voltage;
+#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
+		fpga_call_notifier(FPGA_RST_START, NULL);
+#endif
+		ret |= fpga_power_uninit(mnt_pri);
+		ret |= fpga_power_init(mnt_pri);
+		ret |= fpga_powercontrol_vcccore(&mnt_pri->hw_data, true);
+		ret |= fpga_powercontrol_vccio(&mnt_pri->hw_data, true);
+		usleep_range(RST_TO_NORMAL_TIME, RST_TO_NORMAL_TIME);
+#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
+		fpga_call_notifier(FPGA_RST_END, NULL);
+#endif
+		FPGA_INFO("VCC_CORE_CONTROL\n");
+		break;
+
+	case VCC_IO_CONTROL:
+		mnt_pri->hw_data.vcc_io_volt = voltage;
+#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
+		fpga_call_notifier(FPGA_RST_START, NULL);
+#endif
+		ret |= fpga_power_uninit(mnt_pri);
+		ret |= fpga_power_init(mnt_pri);
+		ret |= fpga_powercontrol_vcccore(&mnt_pri->hw_data, true);
+		ret |= fpga_powercontrol_vccio(&mnt_pri->hw_data, true);
+		usleep_range(RST_TO_NORMAL_TIME, RST_TO_NORMAL_TIME);
+#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
+		fpga_call_notifier(FPGA_RST_END, NULL);
+#endif
+		FPGA_INFO("VCC_IO_CONTROL\n");
+		break;
+#if FPGA_POWER_DEBUG
+	case POWER_CONTROL_PROBE_START:
+		cancel_delayed_work_sync(&mnt_pri->power_debug_work);
+		FPGA_INFO("POWER_CONTROL_PROBE_START\n");
+		break;
+
+	case POWER_CONTROL_PROBE_STOP:
+		queue_delayed_work(mnt_pri->power_debug_wq, &mnt_pri->power_debug_work, msecs_to_jiffies(FPGA_MONITOR_WORK_TIME));
+		FPGA_INFO("POWER_CONTROL_PROBE_STOP\n");
+		break;
+#endif
+	case ATCMD_POWER_ON:
+		ret |= fpga_powercontrol_vcccore(&mnt_pri->hw_data, true);
+		ret |= fpga_powercontrol_vccio(&mnt_pri->hw_data, true);
+		mnt_pri->power_ready = true;
+		FPGA_INFO("ATCMD_POWER_ON\n");
+		break;
+	case ATCMD_POWER_OFF:
+		ret |= fpga_powercontrol_vccio(&mnt_pri->hw_data, false);
+		ret |= fpga_powercontrol_vcccore(&mnt_pri->hw_data, false);
+		mnt_pri->power_ready = false;
+		FPGA_INFO("ATCMD_POWER_OFF\n");
+		break;
+	default:
+		break;
+	}
+	mutex_unlock(&mnt_pri->mutex);
+	mnt_pri->hw_control_rst = ret;
+
+	return count;
+}
+
+DECLARE_PROC_OPS(fpga_hw_control_fops, simple_open, fpga_hw_control_read, fpga_hw_control_write, NULL);
+
+static ssize_t proc_fpga_work_state_read(struct file *file,
+		char __user *user_buf, size_t count, loff_t *ppos)
+{
+	int ret = 0;
+	struct fpga_mnt_pri *mnt_pri = PDE_DATA(file_inode(file));
+	struct fpga_power_data *pdata = NULL;
+	char page[PAGESIZE] = {0};
+
+	if (!mnt_pri) {
+		FPGA_ERR("%s error:file_inode.\n", __func__);
+		return ret;
+	}
+
+	pdata = &mnt_pri->hw_data;
+
+	FPGA_INFO("%s:fpga state change to suspend\n", __func__);
+
+	gpio_direction_output(pdata->clk_switch_gpio, 1);
+	gpio_direction_output(pdata->sleep_en_gpio, 1);
+	msleep(100);
+	FPGA_INFO("%s:fpga state change to resume\n", __func__);
+	gpio_direction_output(pdata->clk_switch_gpio, 0);
+	gpio_direction_output(pdata->sleep_en_gpio, 0);
+
+	snprintf(page, PAGESIZE - 1, "%d\n", 0);
+
+	ret = simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
+	return ret;
+}
+
+DECLARE_PROC_OPS(fpga_work_state_fops, simple_open, proc_fpga_work_state_read, NULL, NULL);
+
+static ssize_t proc_fpga_update_flag_read(struct file *file,
+		char __user *user_buf, size_t count, loff_t *ppos)
+{
+	int ret = 0;
+	struct fpga_mnt_pri *mnt_pri = PDE_DATA(file_inode(file));
+	char page[PAGESIZE] = {0};
+
+	if (!mnt_pri) {
+		FPGA_ERR("%s error:file_inode.\n", __func__);
+		return ret;
+	}
+	snprintf(page, PAGESIZE - 1, "%d\n", mnt_pri->update_flag);
+
+	ret = simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
+	return ret;
+}
+
+DECLARE_PROC_OPS(fpga_update_flag_fops, simple_open, proc_fpga_update_flag_read, NULL, NULL);
+
+static int proc_dump_register_read_func(struct seq_file *s, void *v)
+{
+	int ret = 0;
+	u8 *page = NULL;
+	u8 _buf[PAGESIZE] = {0};
+	u8 reg_buf[FPGA_REG_MAX_ADD] = {0};
+	int i = 0;
+	struct fpga_mnt_pri *mnt_pri = (struct fpga_mnt_pri *) s->private;
+	struct fpga_power_data *pdata = NULL;
+	struct fpga_status_t *status = &mnt_pri->status;
+	struct fpga_status_t *all_status = &mnt_pri->all_status;
+
+	if (!mnt_pri) {
+		FPGA_ERR("%s error:file_inode.\n", __func__);
+		seq_printf(s, "%s error:file_inode.\n", __func__);
+		return ret;
+	}
+
+	pdata = &mnt_pri->hw_data;
+
+	if (!mnt_pri->bus_ready) {
+		FPGA_INFO("%s, bus not ready! exit\n", __func__);
+		seq_printf(s, "%s, bus not ready! exit\n", __func__);
+		return 0;
+	}
+
+	memset(reg_buf, 0, sizeof(reg_buf));
+	ret = fpga_i2c_read(mnt_pri, FPGA_REG_ADDR, reg_buf, FPGA_REG_MAX_ADD);
+	if (ret < 0) {
+		FPGA_ERR("fpga i2c read failed: ret %d\n", ret);
+		seq_printf(s, "fpga i2c read failed: ret %d\n", ret);
+		return 0;
+	}
+
+	page = (u8 *)kzalloc(2048, GFP_KERNEL);
+	if (!page) {
+		seq_printf(s, "proc_dump_register_read_func : kzalloc page error\n");
+		return 0;
+	}
+
+	for (i = 0; i < FPGA_REG_MAX_ADD; i++) {
+		memset(_buf, 0, sizeof(_buf));
+		snprintf(_buf, sizeof(_buf), "reg 0x%x:0x%x\n", i, reg_buf[i]);
+		strlcat(page, _buf, 2048);
+	}
+
+	seq_printf(s, "%s\n", page);
+	kfree(page);
+	seq_printf(s, "io_tx = %llu\n", status->io_tx_err_cnt);
+	seq_printf(s, "io_rx = %llu\n", status->io_rx_err_cnt);
+	seq_printf(s, "i2c_tx = %llu\n", status->i2c_tx_err_cnt);
+	seq_printf(s, "i2c_rx = %llu\n", status->i2c_rx_err_cnt);
+	seq_printf(s, "spi_tx = %llu\n", status->spi_tx_err_cnt);
+	seq_printf(s, "spi_rx = %llu\n", status->spi_rx_err_cnt);
+	seq_printf(s, "slave_err_cnt = %llu\n", status->slave_err_cnt);
+
+	seq_printf(s, "all_io_tx = %llu\n", all_status->io_tx_err_cnt);
+	seq_printf(s, "all_io_rx = %llu\n", all_status->io_rx_err_cnt);
+	seq_printf(s, "all_i2c_tx = %llu\n", all_status->i2c_tx_err_cnt);
+	seq_printf(s, "all_i2c_rx = %llu\n", all_status->i2c_rx_err_cnt);
+	seq_printf(s, "all_spi_tx = %llu\n", all_status->spi_tx_err_cnt);
+	seq_printf(s, "all_spi_rx = %llu\n", all_status->spi_rx_err_cnt);
+	seq_printf(s, "all_slave_err_cnt = %llu\n", all_status->slave_err_cnt);
+
+	return 0;
+}
+
+static int dump_register_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, proc_dump_register_read_func, PDE_DATA(inode));
+}
+
+DECLARE_PROC_OPS(fpga_dump_info_fops, dump_register_open, seq_read, NULL, single_release);
+
+static int fpga_health_monitor_read_func(struct seq_file *s, void *v)
+{
+	struct fpga_mnt_pri *mnt_pri = (struct fpga_mnt_pri *) s->private;
+	struct monitor_data *monitor_data = NULL;
+
+	if (!mnt_pri) {
+		FPGA_ERR("%s error:file_inode.\n", __func__);
+		return 0;
+	}
+	monitor_data = &mnt_pri->moni_data;
+
+	if (!monitor_data) {
+		FPGA_ERR("monitor_data is null.\n");
+		return 0;
+	}
+
+	mutex_lock(&mnt_pri->mutex);
+	seq_printf(s, "fpga_m_version:\t\t%d\n", mnt_pri->version_m);
+	seq_printf(s, "fpga_s_version:\t\t%d\n", mnt_pri->version_s);
+	seq_printf(s, "fpga_manufacture:\t\t%s\n", mnt_pri->manufacture);
+	fpga_healthinfo_read(s, monitor_data);
+
+	mutex_unlock(&mnt_pri->mutex);
+	return 0;
+}
+
+static ssize_t health_monitor_control(struct file *file, const char __user *buf, size_t count, loff_t *lo)
+{
+	struct fpga_mnt_pri *mnt_pri = PDE_DATA(file_inode(file));
+	struct monitor_data *monitor_data = NULL;
+	char buffer[4] = {0};
+	int tmp = 0;
+
+	if (!mnt_pri) {
+		FPGA_ERR("%s error:file_inode.\n", __func__);
+		return count;
+	}
+	monitor_data = &mnt_pri->moni_data;
+
+	if (!monitor_data) {
+		FPGA_ERR("monitor_data is null.\n");
+		return count;
+	}
+
+	if (count > 2) {
+		goto EXIT;
+	}
+	if (copy_from_user(buffer, buf, count)) {
+		FPGA_ERR("%s: read proc input error.\n", __func__);
+		goto EXIT;
+	}
+
+	mutex_lock(&mnt_pri->mutex);
+	if (1 == sscanf(buffer, "%d", &tmp) && tmp == 0) {
+		fpga_healthinfo_clear(monitor_data);
+	} else {
+		FPGA_ERR("invalid operation\n");
+	}
+	mutex_unlock(&mnt_pri->mutex);
+
+EXIT:
+	return count;
+}
+
+static int health_monitor_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, fpga_health_monitor_read_func, PDE_DATA(inode));
+}
+
+DECLARE_PROC_OPS(fpga_health_monitor_fops, health_monitor_open, seq_read, health_monitor_control, single_release);
+
+int fpga_proc_create(struct fpga_mnt_pri *mnt_pri)
+{
+	struct proc_dir_entry *d_entry;
+
+	d_entry = proc_create_data("info", S_IRUGO, mnt_pri->pr_entry, &fpga_info_node_fops, mnt_pri);
+	if (d_entry == NULL) {
+		FPGA_ERR("Couldn't create fpga info proc data\n");
+		return -EINVAL;
+	}
+
+	d_entry = proc_create_data("status", S_IRUGO, mnt_pri->pr_entry, &fpga_status_node_fops, mnt_pri);
+	if (d_entry == NULL) {
+		FPGA_ERR("Couldn't create fpga status proc data\n");
+		return -EINVAL;
+	}
+	d_entry = proc_create_data("hw_control", (S_IRUGO | S_IWUGO), mnt_pri->pr_entry, &fpga_hw_control_fops, mnt_pri);
+	if (d_entry == NULL) {
+		FPGA_ERR("Couldn't create fpga hw_contorl proc data\n");
+		return -EINVAL;
+	}
+	d_entry = proc_create_data("work_state", S_IRUGO, mnt_pri->pr_entry, &fpga_work_state_fops, mnt_pri);
+	if (d_entry == NULL) {
+		FPGA_ERR("Couldn't create fpga hw_contorl proc data\n");
+		return -EINVAL;
+	}
+	d_entry = proc_create_data("update_flag", S_IRUGO, mnt_pri->pr_entry, &fpga_update_flag_fops, mnt_pri);
+	if (d_entry == NULL) {
+		FPGA_ERR("Couldn't create fpga update_flag proc data\n");
+		return -EINVAL;
+	}
+	d_entry = proc_create_data("dump_info", S_IRUGO, mnt_pri->pr_entry, &fpga_dump_info_fops, mnt_pri);
+	if (d_entry == NULL) {
+		FPGA_ERR("Couldn't create fpga dump_info proc data\n");
+		return -EINVAL;
+	}
+	d_entry = proc_create_data("health_info", S_IRUGO, mnt_pri->pr_entry, &fpga_health_monitor_fops, mnt_pri);
+	if (d_entry == NULL) {
+		FPGA_ERR("Couldn't create fpga health_info proc data\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
 
 static int fpga_dts_init(struct fpga_mnt_pri *mnt_pri)
 {
@@ -668,7 +926,6 @@ static int fpga_dts_init(struct fpga_mnt_pri *mnt_pri)
 	unsigned int temp;
 	struct fpga_power_data *pdata = NULL;
 	struct device_node *np = NULL;
-	const char *clock_name;
 
 	pdata = &mnt_pri->hw_data;
 
@@ -693,7 +950,7 @@ static int fpga_dts_init(struct fpga_mnt_pri *mnt_pri)
 			FPGA_ERR("unable to request clk_switch_gpio [%d]\n", pdata->clk_switch_gpio);
 		} else {
 			gpio_direction_output(pdata->clk_switch_gpio, 0);
-			FPGA_INFO("clk_switch_gpio[%d]\n", pdata->clk_switch_gpio);
+			FPGA_INFO("%s:clk_switch_gpio[%d]\n", __func__, pdata->clk_switch_gpio);
 		}
 	}
 
@@ -707,7 +964,7 @@ static int fpga_dts_init(struct fpga_mnt_pri *mnt_pri)
 			FPGA_ERR("unable to request sleep_en_gpio [%d]\n", pdata->sleep_en_gpio);
 		} else {
 			gpio_direction_output(pdata->sleep_en_gpio, 0);
-			FPGA_INFO("sleep_en_gpio[%d]\n",pdata->sleep_en_gpio);
+			FPGA_INFO("%s:sleep_en_gpio[%d]\n", __func__, pdata->sleep_en_gpio);
 		}
 	}
 
@@ -720,39 +977,10 @@ static int fpga_dts_init(struct fpga_mnt_pri *mnt_pri)
 		if (rc) {
 			FPGA_ERR("unable to request rst_gpio [%d]\n", pdata->rst_gpio);
 		} else {
-			FPGA_INFO("rst_gpio[%d]\n",pdata->rst_gpio);
+			FPGA_INFO("%s:rst_gpio[%d]\n", __func__, pdata->rst_gpio);
 			gpio_direction_output(pdata->rst_gpio, 1);
 		}
 	}
-
-	pdata->fpga_err_gpio = of_get_named_gpio(np, "fpga_err_gpio", 0);
-	rc = gpio_is_valid(pdata->fpga_err_gpio);
-	if (!rc) {
-		FPGA_ERR("gpio_is_valid fail fpga_err_gpio[%d]\n", pdata->fpga_err_gpio);
-	} else {
-		rc = gpio_request(pdata->fpga_err_gpio, "fpga_err_gpio");
-		if (rc) {
-			FPGA_ERR("unable to request fpga_err_gpio [%d]\n", pdata->fpga_err_gpio);
-		} else {
-			FPGA_INFO("fpga_err_gpio[%d]\n",pdata->fpga_err_gpio);
-			gpio_direction_output(pdata->fpga_err_gpio, 1);
-		}
-	}
-
-	pdata->fgpa_err_intr_gpio = of_get_named_gpio(np, "fgpa_err_intr_gpio", 0);
-	rc = gpio_is_valid(pdata->fgpa_err_intr_gpio);
-	if (!rc) {
-		FPGA_ERR("gpio_is_valid fail fgpa_err_intr_gpio[%d]\n", pdata->fgpa_err_intr_gpio);
-	} else {
-		rc = gpio_request(pdata->fgpa_err_intr_gpio, "fgpa_err_intr_gpio");
-		if (rc) {
-			FPGA_ERR("unable to request fgpa_err_intr_gpio [%d]\n", pdata->fgpa_err_intr_gpio);
-		} else {
-			FPGA_INFO("fgpa_err_intr_gpio[%d]\n",pdata->fgpa_err_intr_gpio);
-			gpio_direction_input(pdata->fgpa_err_intr_gpio);
-		}
-	}
-
 
 	pdata->vcc_core_gpio = of_get_named_gpio(np, "vcc-core-gpio", 0);
 	rc = gpio_is_valid(pdata->vcc_core_gpio);
@@ -763,7 +991,7 @@ static int fpga_dts_init(struct fpga_mnt_pri *mnt_pri)
 		if (rc) {
 			FPGA_ERR("unable to request vcc_core_gpio [%d]\n", pdata->vcc_core_gpio);
 		} else {
-			FPGA_INFO("vcc_core_gpio[%d]\n",pdata->vcc_core_gpio);
+			FPGA_INFO("%s:vcc_core_gpio[%d]\n", __func__, pdata->vcc_core_gpio);
 		}
 	}
 
@@ -776,7 +1004,7 @@ static int fpga_dts_init(struct fpga_mnt_pri *mnt_pri)
 		if (rc) {
 			FPGA_ERR("unable to request vcc_io_gpio [%d]\n", pdata->vcc_io_gpio);
 		} else {
-			FPGA_INFO("vcc_io_gpio[%d]\n",pdata->vcc_io_gpio);
+			FPGA_INFO("%s:vcc_io_gpio[%d]\n", __func__, pdata->vcc_io_gpio);
 		}
 	}
 
@@ -792,19 +1020,9 @@ static int fpga_dts_init(struct fpga_mnt_pri *mnt_pri)
 		FPGA_ERR("vcc_io_volt not defined\n");
 	}
 
-	memset(mnt_pri->clk_name, 0, 16);
-	rc = of_property_read_string(np, "clock-names", &clock_name);
-	if (rc < 0) {
-		FPGA_ERR("clock-names not defined, use default\n");
-		strncpy(mnt_pri->clk_name, "bb_clk4", 16);
-	} else {
-		FPGA_INFO("got clk name : %s.\n", clock_name);
-		strncpy(mnt_pri->clk_name, clock_name, 16);
-	}
-
 	rc = of_property_read_u32(np, "platform_support_project_dir", &temp);
 	if (rc < 0) {
-		FPGA_ERR("platform_support_project_dir not specified\n");
+		FPGA_INFO("platform_support_project_dir not specified\n");
 		temp = 24001;
 	}
 	memset(mnt_pri->fw_path, 0, 64);
@@ -853,19 +1071,9 @@ static int fpga_dts_init(struct fpga_mnt_pri *mnt_pri)
 		return -EINVAL;
 	}
 
-	pdata->fpga_err_low = pinctrl_lookup_state(pdata->pinctrl, "fpga_err_low");
-	if (IS_ERR_OR_NULL(pdata->fpga_err_low)) {
-		FPGA_ERR("Failed to get the state fpga_err_low pinctrl handle\n");
-		return -EINVAL;
-	}
-
-	pdata->fpga_err_high = pinctrl_lookup_state(pdata->pinctrl, "fpga_err_high");
-	if (IS_ERR_OR_NULL(pdata->fpga_err_high)) {
-		FPGA_ERR("Failed to get the state fpga_err_high pinctrl handle\n");
-		return -EINVAL;
-	}
-
 	pinctrl_select_state(pdata->pinctrl, pdata->fpga_ative);
+	pinctrl_select_state(pdata->pinctrl, pdata->fpga_clk_switch_ative);
+	pinctrl_select_state(pdata->pinctrl, pdata->fpga_rst_ative);
 
 	FPGA_INFO("end\n");
 	return 0;
@@ -873,72 +1081,22 @@ static int fpga_dts_init(struct fpga_mnt_pri *mnt_pri)
 
 static int fpga_monitor_init(struct fpga_mnt_pri *mnt_pri)
 {
+/*
 	int ret;
-	u8 buf[FPGA_REG_MAX_ADD] = {0};
-	char hex_str[FPGA_REG_MAX_ADD * 2 + 1] = {0};
-	struct fpga_status_t *status = &mnt_pri->status;
-	struct fpga_status_t *all_status = &mnt_pri->all_status;
-
-	status->m_io_rx_err_cnt = 0;
-	status->m_i2c_rx_err_cnt = 0;
-	status->m_spi_rx_err_cnt = 0;
-	status->s_io_rx_err_cnt = 0;
-	status->s_i2c_rx_err_cnt = 0;
-	status->s_spi_rx_err_cnt = 0;
-	all_status->m_io_rx_err_cnt = 0;
-	all_status->m_i2c_rx_err_cnt = 0;
-	all_status->m_spi_rx_err_cnt = 0;
-	all_status->s_io_rx_err_cnt = 0;
-	all_status->s_i2c_rx_err_cnt = 0;
-	all_status->s_spi_rx_err_cnt = 0;
-
+	u8 buf[32] = {0};
+*/
 	mnt_pri->prj_id = get_project();
 	FPGA_INFO("prj_id %d\n", mnt_pri->prj_id);
-
-	ret = fpga_i2c_read(mnt_pri, FPGA_REG_ADDR, buf, 8);
-	u8ArrayToHexString(buf, FPGA_REG_MAX_ADD, hex_str, sizeof(hex_str));
+	strncpy(mnt_pri->manufacture, "GAOYUN", 64 - 1);
+/*
+	ret = fpga_i2c_read(mnt_pri, FPGA_REG_ADDR, buf, 14);
 	if (ret < 0) {
-		FPGA_ERR("fpga i2c read failed! ret %d\n", ret);
-		trace_fpga_stat(get_timestamp_ms(), 0, 0, hex_str, 1, 0, 0, 0, 0, 0, 0, 0);
-	} else {
-		FPGA_INFO("fpga_monitor_init: reg:%*ph\n", 8, buf);
-		mnt_pri->version_m = buf[0] << 24 | buf[1] << 16 | buf[2] << 8 | buf[3];
-		mnt_pri->version_s = buf[4] << 24 | buf[5] << 16 | buf[6] << 8 | buf[7];
-		trace_fpga_stat(get_timestamp_ms(), mnt_pri->version_m, mnt_pri->version_s, hex_str, 0, 0, 0, 0, 0, 0, 0, 0);
+		FPGA_ERR("read failed! ret %d\n", ret);
+		return -1;
 	}
-	return 0;
-}
-
-uint8_t fpga_get_bf_from_cmdline(void)
-{
-	struct device_node *node;
-	const char *bootparams = NULL;
-	char *str;
-	int ret;
-	int bf = 0;
-
-	node = of_find_node_by_path("/chosen");
-	if (node) {
-		ret = of_property_read_string(node, "bootargs", &bootparams);
-		if (!bootparams || ret < 0) {
-			return 0;
-		}
-		str = strstr(bootparams, "oplus_fpga_bf=");
-		if (str) {
-			str += strlen("oplus_fpga_bf=");
-			FPGA_INFO("fpga_get_bf_from_cmdline get str is %s\n", str);
-			ret = get_option(&str, &bf);
-			if (ret == 1) {
-				if (bf == 1) {
-					FPGA_INFO("fpga_get_bf_from_cmdline get cmdline bf is 1\n");
-					return 1;
-				} else {
-					FPGA_INFO("fpga_get_bf_from_cmdline get cmdline bf is 0\n");
-					return 0;
-				}
-			}
-		}
-	}
+	mnt_pri->version_m = buf[0] << 24 | buf[1] << 16 | buf[2] << 8 | buf[3];
+	mnt_pri->version_s = buf[4] << 24 | buf[5] << 16 | buf[6] << 8 | buf[7];
+*/
 	return 0;
 }
 
@@ -947,43 +1105,16 @@ static void fpga_power_debug_work(struct work_struct *work)
 {
 	struct fpga_mnt_pri *mnt_pri = container_of(work, struct fpga_mnt_pri, power_debug_work.work);
 
-	FPGA_INFO("enter\n");
-	fpga_sw_rst(mnt_pri);
-	FPGA_INFO("exit\n");
+	FPGA_INFO("%s:enter\n", __func__);
+	fpga_rst_control(mnt_pri);
+	FPGA_INFO("%s:exit\n", __func__);
 
 	mnt_pri->power_debug_work_count++;
 	if (mnt_pri->power_debug_work_count <= FPGA_POWER_DEBUG_MAX_TIMES) {
-		queue_delayed_work(mnt_pri->power_debug_wq, &mnt_pri->power_debug_work, msecs_to_jiffies(100));
+		queue_delayed_work(mnt_pri->power_debug_wq, &mnt_pri->power_debug_work, msecs_to_jiffies(FPGA_MONITOR_WORK_TIME));
 	}
 }
 #endif
-
-static void resume_check_work(struct work_struct *work)
-{
-	FPGA_ERR("resume_check_work enter!\n");
-	struct fpga_mnt_pri *mnt_pri = container_of(work, struct fpga_mnt_pri, resume_work);
-	msleep(200);
-	if (!fpga_check_and_recovery(mnt_pri)) {
-		FPGA_ERR("fpga resume check and recovery fail!\n");
-	}
-}
-
-static irqreturn_t fpga_err_thread_fn(int irq, void *dev_id)
-{
-	FPGA_INFO("fpga_err_interrupt_handler enter!\n");
-	bool ret = false;
-	char hex_str[FPGA_REG_MAX_ADD * 2 + 1] = {0};
-	trace_fpga_stat(get_timestamp_ms(), 0, 0, hex_str, 0, 0, 0, 0, 0, 1, 0, 0);
-	struct fpga_mnt_pri *mnt_pri = (struct fpga_mnt_pri *)dev_id;
-	ret = fpga_check_and_recovery(mnt_pri);
-	if (!ret) {
-		FPGA_ERR("fpga_check_and_recovery fail\n");
-	}
-	return IRQ_HANDLED;
-}
-
-#define FPGA_ERR_INTR_NAME "fpga_fw_err_intr"
-#define FPGA_ERR_INTR_GPIO_NUM 196
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 static int fpga_monitor_probe(struct i2c_client *i2c)
@@ -993,7 +1124,9 @@ static int fpga_monitor_probe(struct i2c_client *i2c, const struct i2c_device_id
 {
 	struct fpga_mnt_pri *mnt_pri;
 	int ret;
-	int fpga_fw_err_irq;
+	size_t size;
+	int update_rst;
+	int *pfpga_update_rst = NULL;
 
 	FPGA_INFO("probe start\n");
 
@@ -1010,15 +1143,7 @@ static int fpga_monitor_probe(struct i2c_client *i2c, const struct i2c_device_id
 	mnt_pri->hb_workqueue = create_singlethread_workqueue("fpga_monitor");
 	INIT_DELAYED_WORK(&mnt_pri->hb_work, fpga_heartbeat_work);
 
-	INIT_WORK(&mnt_pri->resume_work, resume_check_work);
-
 	i2c_set_clientdata(i2c, mnt_pri);
-
-	mnt_pri->payload = kzalloc(1024, GFP_KERNEL);
-	if (!mnt_pri->payload) {
-  		FPGA_ERR("alloc payload memory failed!");
-		mnt_pri->payload = NULL;
-	}
 
 	mnt_pri->pr_entry = proc_mkdir(FPGA_PROC_NAME, NULL);
 	if (mnt_pri->pr_entry == NULL) {
@@ -1033,17 +1158,17 @@ static int fpga_monitor_probe(struct i2c_client *i2c, const struct i2c_device_id
 
 	ret = fpga_power_init(mnt_pri);
 	if (ret) {
-		FPGA_ERR("fpga_power_control error,ret%d\n", ret);
+		FPGA_ERR("fpga_power_control error，ret%d\n", ret);
 	}
 
-	ret = fpga_powercontrol_vccio(&mnt_pri->hw_data, true);
-	if (ret) {
-		FPGA_ERR("fpga_powercontrol_vccio error,ret%d\n", ret);
-	}
-	mdelay(1);  // mdelay is accurate, msleep is not aacurete(cpu schedule)
 	ret = fpga_powercontrol_vcccore(&mnt_pri->hw_data, true);
 	if (ret) {
-		FPGA_ERR("fpga_powercontrol_vcccore error,ret%d\n", ret);
+		FPGA_ERR("fpga_powercontrol_vcccore error，ret%d\n", ret);
+	}
+	msleep(1);
+	ret = fpga_powercontrol_vccio(&mnt_pri->hw_data, true);
+	if (ret) {
+		FPGA_ERR("fpga_powercontrol_vccio error，ret%d\n", ret);
 	}
 
 	ret = fpga_monitor_init(mnt_pri);
@@ -1059,43 +1184,42 @@ static int fpga_monitor_probe(struct i2c_client *i2c, const struct i2c_device_id
 	queue_delayed_work(mnt_pri->hb_workqueue, &mnt_pri->hb_work, msecs_to_jiffies(1000));
 
 #if FPGA_POWER_DEBUG
-	mnt_pri->power_debug_work_count = 0;
 	mnt_pri->power_debug_wq = create_singlethread_workqueue("fpga_power_debug_wq");
 	INIT_DELAYED_WORK(&mnt_pri->power_debug_work, fpga_power_debug_work);
 	queue_delayed_work(mnt_pri->power_debug_wq, &mnt_pri->power_debug_work, msecs_to_jiffies(100));
 #endif
 
-	mnt_pri->fpga_ck = devm_clk_get(mnt_pri->dev, mnt_pri->clk_name);
-	if (IS_ERR(mnt_pri->fpga_ck)) {
-		FPGA_ERR("failed to get %s.\n", mnt_pri->clk_name);
+	mnt_pri->health_monitor_support = true;
+	if (mnt_pri->health_monitor_support) {
+		mnt_pri->moni_data.health_monitor_support = mnt_pri->health_monitor_support;
+		ret = fpga_healthinfo_init(mnt_pri->dev, &mnt_pri->moni_data);
+		if (ret < 0) {
+			FPGA_ERR("health info init failed.\n");
+		}
 	}
 	mnt_pri->hw_control_rst = 0;
+/*
+	mnt_pri->fpga_ck = devm_clk_get(mnt_pri->dev, "bb_clk4");
+	if (IS_ERR(mnt_pri->fpga_ck)) {
+		FPGA_ERR("failed to get bb_clk4\n");
+	}
+*/
 	mnt_pri->bus_ready = true;
 	mnt_pri->power_ready = true;
-	mnt_pri->check_recovery_running = false;
-	mnt_pri->fpga_monitor_time = 0;    /* default value 0, indicate no rus config set */
-	mnt_pri->heartbeat_switch = -1;    /* default value -1, indicate no rus config set */
-	g_mnt_pri = mnt_pri;
-#if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
-	ret = fpga_register_notifier(&oplus_fpga_monitor_state_notifier_block);
-	if (ret != 0) {
-		FPGA_ERR("fpga_register_notifier failed!\n");
+	pfpga_update_rst = (int *)qcom_smem_get(QCOM_SMEM_HOST_ANY, SMEM_OPLUS_FPGA_PROP, &size);
+	if (IS_ERR(pfpga_update_rst)) {
+		FPGA_INFO("qcom_smem_get failed.\n");
+		mnt_pri->update_flag = FPGA_UEFI_UPDATE_NG;
+	} else {
+		update_rst = *pfpga_update_rst;
+		if (update_rst == 0x55aa0001) {
+			FPGA_INFO("uefi update success.\n");
+			mnt_pri->update_flag = FPGA_UEFI_UPDATE_OK;
+		} else {
+			FPGA_INFO("uefi update failed, rst = 0x%x.\n", update_rst);
+			mnt_pri->update_flag = FPGA_UEFI_UPDATE_NG;
+		}
 	}
-#endif
-
-	/* interrupt gpio196 method:IRQF_TRIGGER_HIGH, normal low-->abnormal high 30us */
-	fpga_fw_err_irq = gpio_to_irq(mnt_pri->hw_data.fgpa_err_intr_gpio);
-	if (fpga_fw_err_irq < 0) {
-		FPGA_ERR("request fpga_fw_err_irq fail\n");
-	}
-	FPGA_ERR("fpga_fw_err_irq is %d\n", fpga_fw_err_irq);
-	ret = devm_request_threaded_irq(&i2c->dev, fpga_fw_err_irq, NULL, fpga_err_thread_fn,
-						IRQF_TRIGGER_RISING  | IRQF_ONESHOT, FPGA_ERR_INTR_NAME, mnt_pri);
-	if (ret) {
-		FPGA_ERR("request request_threaded_irq fail\n");
-	}
-
-	g_bf_flag = fpga_get_bf_from_cmdline();
 
 	FPGA_INFO("fpga_monitor_probe sucess\n");
 	return 0;
@@ -1104,12 +1228,6 @@ static int fpga_monitor_probe(struct i2c_client *i2c, const struct i2c_device_id
 void fpga_monitor_remove(struct i2c_client *i2c)
 {
 	struct fpga_mnt_pri *mnt_pri = i2c_get_clientdata(i2c);
-
-	FPGA_INFO("is called\n");
-	if (!mnt_pri) {
-		FPGA_ERR("mnt_pri is null\n");
-		return;
-	}
 
 	cancel_delayed_work_sync(&mnt_pri->hb_work);
 	flush_workqueue(mnt_pri->hb_workqueue);
@@ -1122,9 +1240,6 @@ void fpga_monitor_remove(struct i2c_client *i2c)
 #endif
 
 	remove_proc_entry(FPGA_PROC_NAME, NULL);
-	if (mnt_pri->payload) {
-		kfree(mnt_pri->payload);
-	}
 	kfree(mnt_pri);
 	FPGA_INFO("remove sucess\n");
 }
@@ -1133,7 +1248,7 @@ static int fpga_monitor_suspend(struct device *dev)
 {
 	struct fpga_mnt_pri *mnt_pri = dev_get_drvdata(dev);
 
-	FPGA_INFO("is called\n");
+	FPGA_INFO("%s is called\n", __func__);
 
 	if (!mnt_pri) {
 		FPGA_ERR("mnt_pri is null\n");
@@ -1149,17 +1264,14 @@ static int fpga_monitor_resume(struct device *dev)
 {
 	struct fpga_mnt_pri *mnt_pri = dev_get_drvdata(dev);
 
-	FPGA_INFO("is called\n");
+	FPGA_INFO("%s is called\n", __func__);
 
 	if (!mnt_pri) {
 		FPGA_ERR("mnt_pri is null\n");
 		return 0;
 	}
 	mnt_pri->bus_ready = true;
-	schedule_work(&mnt_pri->resume_work);
-	if (mnt_pri->heartbeat_switch != 0) {    // no rus set off, continue start work
-		queue_delayed_work(mnt_pri->hb_workqueue, &mnt_pri->hb_work, msecs_to_jiffies(FPGA_MONITOR_WORK_TIME));
-	}
+	queue_delayed_work(mnt_pri->hb_workqueue, &mnt_pri->hb_work, msecs_to_jiffies(FPGA_MONITOR_WORK_TIME));
 	return 0;
 }
 
@@ -1180,10 +1292,9 @@ static int fpga_monitor_suspend_late(struct device *dev)
 	gpio_direction_output(pdata->clk_switch_gpio, 1);
 
 	if (mnt_pri->fpga_ck) {
-		FPGA_INFO("disable fpga clk.\n");
+		FPGA_INFO("%s disable fpga clk.\n", __func__);
 		clk_disable_unprepare(mnt_pri->fpga_ck);
 	}
-
 	return 0;
 }
 
@@ -1201,7 +1312,7 @@ static int fpga_monitor_resume_early(struct device *dev)
 	FPGA_INFO("enter\n");
 
 	if (mnt_pri->fpga_ck) {
-		FPGA_INFO("enable fpga clk.\n");
+		FPGA_INFO("%s enable fpga clk.\n", __func__);
 		clk_prepare_enable(mnt_pri->fpga_ck);
 	}
 
@@ -1232,7 +1343,7 @@ static const struct i2c_device_id fpga_i2c_id[] = {
 
 static struct i2c_driver fpga_i2c_driver = {
 	.probe    = fpga_monitor_probe,
-	.remove   = fpga_monitor_remove,
+	//   .remove   = fpga_monitor_remove,
 	.id_table = fpga_i2c_id,
 	.driver   = {
 		.name           = FPGA_MNT_I2C_NAME,
@@ -1243,97 +1354,28 @@ static struct i2c_driver fpga_i2c_driver = {
 	},
 };
 
-static void fpga_monitor_load_work_handler(struct work_struct *work);
-static DECLARE_WORK(fpga_monitor_load_work, fpga_monitor_load_work_handler);
-
-static void fpga_monitor_load_work_handler(struct work_struct *work)
-{
-	int ret = 0;
-
-	FPGA_INFO("is called\n");
-	ret = i2c_add_driver(&fpga_i2c_driver);
-	if (ret) {
-		FPGA_ERR("Failed to register I2C driver %s, rc = %d", FPGA_MNT_I2C_NAME, ret);
-	} else {
-		FPGA_INFO("typec_switch: success to register I2C driver\n");
-	}
-}
-
-static int fpga_monitor_dev_probe(struct platform_device *pdev)
-{
-	FPGA_INFO("is called\n");
-	schedule_work(&fpga_monitor_load_work);
-	return 0;
-}
-
-
-static int __exit fpga_monitor_dev_remove(struct platform_device *pdev)
-{
-	FPGA_INFO("is called\n");
-	return -EBUSY;
-}
-
-void fpga_monitor_dev_shutdown(struct platform_device *pdev)
-{
-
-	FPGA_INFO("is called\n");
-	if (!g_mnt_pri) {
-		FPGA_ERR("g_mnt_pri is null\n");
-		return;
-	}
-	cancel_delayed_work_sync(&g_mnt_pri->hb_work);
-	flush_workqueue(g_mnt_pri->hb_workqueue);
-	destroy_workqueue(g_mnt_pri->hb_workqueue);
-
-	cancel_work_sync(&g_mnt_pri->resume_work);
-
-#if FPGA_POWER_DEBUG
-	cancel_delayed_work_sync(&g_mnt_pri->power_debug_work);
-	flush_workqueue(g_mnt_pri->power_debug_wq);
-	destroy_workqueue(g_mnt_pri->power_debug_wq);
-#endif
-	FPGA_INFO("power down.\n");
-	fpga_powercontrol_vcccore(&g_mnt_pri->hw_data, false);
-	mdelay(1);
-	fpga_powercontrol_vccio(&g_mnt_pri->hw_data, false);
-}
-
-static const struct of_device_id fpga_monitor_dev_of_match[] = {
-	{ .compatible = "fpga_monitor_dev", },
-	{ },
-};
-MODULE_DEVICE_TABLE(of, fpga_monitor_dev_of_match);
-
-static struct platform_driver fpga_monitor_dev_driver = {
-	.probe = fpga_monitor_dev_probe,
-	.remove = __exit_p(fpga_monitor_dev_remove),
-	.shutdown = fpga_monitor_dev_shutdown,
-	.driver = {
-		.name = "fpga_monitor_dev",
-		.owner = THIS_MODULE,
-		.of_match_table = fpga_monitor_dev_of_match,
-	},
-};
-
-static int __init fpga_monitor_dev_init(void)
+static int __init fpga_init(void)
 {
 	int ret;
 
-	ret = platform_driver_register(&fpga_monitor_dev_driver);
+	FPGA_INFO("1: try to register I2C driver\n");
+
+	ret = i2c_add_driver(&fpga_i2c_driver);
 	if (ret) {
-		FPGA_ERR("Failed to register fpga_monitor_dev_driver, ret = %d", ret);
+		FPGA_INFO("Failed to register I2C driver %s, rc = %d", FPGA_MNT_I2C_NAME, ret);
+	} else {
+		FPGA_INFO("typec_switch: success to register I2C driver\n");
 	}
-
-	return ret;
+	return 0;
 }
 
-static void __exit fpga_monitor_dev_exit(void)
+static void __exit fpga_exit(void)
 {
-	platform_driver_unregister(&fpga_monitor_dev_driver);
-	FPGA_INFO("Do nothing.\n");
+	i2c_del_driver(&fpga_i2c_driver);
+	FPGA_INFO("i2c_del_driverr\n");
 }
-subsys_initcall(fpga_monitor_dev_init);
-module_exit(fpga_monitor_dev_exit);
+module_init(fpga_init);
+module_exit(fpga_exit);
 
 MODULE_DESCRIPTION("FPGA I2C driver");
 MODULE_LICENSE("GPL v2");
