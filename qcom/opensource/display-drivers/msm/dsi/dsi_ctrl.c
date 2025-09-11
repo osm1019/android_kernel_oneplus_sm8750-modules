@@ -527,12 +527,12 @@ static int dsi_ctrl_check_state(struct dsi_ctrl *dsi_ctrl,
 	int rc = 0;
 	struct dsi_ctrl_state_info *state = &dsi_ctrl->current_state;
 	bool esync_enabled = false;
-	struct dsi_host_config *host_config;
+	struct dsi_mode_info *host_mode;
 
-	host_config = &dsi_ctrl->host_config;
+	host_mode = &dsi_ctrl->host_config.video_timing;
 
-	if (host_config)
-		esync_enabled = host_config->esync_enabled;
+	if (host_mode)
+		esync_enabled = host_mode->esync_enabled;
 	SDE_EVT32(esync_enabled, dsi_ctrl->cell_index, op, op_state);
 
 	switch (op) {
@@ -1173,22 +1173,9 @@ static int dsi_ctrl_update_link_freqs(struct dsi_ctrl *dsi_ctrl,
 
 	rc = dsi_clk_set_link_frequencies(clk_handle, dsi_ctrl->clk_freq,
 					dsi_ctrl->cell_index);
-	if (rc) {
+	if (rc)
 		DSI_CTRL_ERR(dsi_ctrl, "Failed to update link frequencies\n");
-		goto error;
-	}
 
-	if (config->esync_enabled) {
-		dsi_ctrl->esync_clk_freq = pclk_rate;
-		rc = dsi_clk_set_esync_frequency(clk_handle, dsi_ctrl->esync_clk_freq,
-						dsi_ctrl->cell_index);
-		if (rc) {
-			DSI_CTRL_ERR(dsi_ctrl, "Failed to update esync frequency\n");
-			goto error;
-		}
-	}
-
-error:
 	return rc;
 }
 
@@ -1197,12 +1184,12 @@ static int dsi_ctrl_aoss_update(struct dsi_ctrl *dsi_ctrl, bool enable)
 	int rc;
 	u32 cp_level;
 	bool esync_enabled = false;
-	struct dsi_host_config *host_config;
+	struct dsi_mode_info *host_mode;
 
-	host_config = &dsi_ctrl->host_config;
+	host_mode = &dsi_ctrl->host_config.video_timing;
 
-	if (host_config)
-		esync_enabled = host_config->esync_enabled;
+	if (host_mode)
+		esync_enabled = host_mode->esync_enabled;
 
 	if (enable) {
 		rc = pm_runtime_resume_and_get(dsi_ctrl->drm_dev->dev);
@@ -1550,8 +1537,6 @@ static void dsi_kickoff_msg_tx(struct dsi_ctrl *dsi_ctrl,
 
 	if (flags & DSI_CTRL_CMD_LAST_COMMAND)
 		hw_flags |= DSI_CTRL_CMD_LAST_COMMAND;
-	if (flags & DSI_CTRL_CMD_MULTI_DMA_BURST)
-		hw_flags |= DSI_CTRL_CMD_MULTI_DMA_BURST;
 
 	if (flags & DSI_CTRL_CMD_DEFER_TRIGGER) {
 		if (flags & DSI_CTRL_CMD_FETCH_MEMORY) {
@@ -2651,7 +2636,7 @@ int dsi_ctrl_async_timing_update(struct dsi_ctrl *dsi_ctrl,
 	host_mode = &dsi_ctrl->host_config.video_timing;
 	memcpy(host_mode, timing, sizeof(*host_mode));
 	dsi_ctrl->hw.ops.set_timing_db(&dsi_ctrl->hw, true);
-	dsi_ctrl->hw.ops.set_video_timing(&dsi_ctrl->hw, &dsi_ctrl->host_config);
+	dsi_ctrl->hw.ops.set_video_timing(&dsi_ctrl->hw, host_mode);
 
 exit:
 	mutex_unlock(&dsi_ctrl->ctrl_lock);
@@ -2738,7 +2723,7 @@ int dsi_ctrl_timing_setup(struct dsi_ctrl *dsi_ctrl)
 					&dsi_ctrl->host_config.common_config,
 					&dsi_ctrl->host_config.u.video_engine);
 		dsi_ctrl->hw.ops.set_video_timing(&dsi_ctrl->hw,
-					  &dsi_ctrl->host_config);
+					  &dsi_ctrl->host_config.video_timing);
 		dsi_ctrl->hw.ops.video_engine_en(&dsi_ctrl->hw, true);
 	}
 
@@ -3313,7 +3298,7 @@ int dsi_ctrl_host_init(struct dsi_ctrl *dsi_ctrl, bool skip_op)
 					&dsi_ctrl->host_config.common_config,
 					&dsi_ctrl->host_config.u.video_engine);
 			dsi_ctrl->hw.ops.set_video_timing(&dsi_ctrl->hw,
-					  &dsi_ctrl->host_config);
+					  &dsi_ctrl->host_config.video_timing);
 		}
 	}
 

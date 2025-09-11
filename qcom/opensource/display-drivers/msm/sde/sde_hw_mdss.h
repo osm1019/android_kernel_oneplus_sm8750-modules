@@ -282,11 +282,6 @@ enum sde_ctl {
 	CTL_MAX
 };
 
-enum sde_ctl_hyp {
-	CTL_HYP_0 = 1,
-	CTL_HYP_MAX
-};
-
 enum sde_cdm {
 	CDM_0 = 1,
 	CDM_1,
@@ -359,7 +354,6 @@ enum sde_intf_type {
 
 	/* virtual interfaces */
 	INTF_WB = 0x100,
-	INTF_LB = 0x101,
 };
 
 enum sde_intf_mode {
@@ -739,7 +733,6 @@ enum skip_blend_plane_type {
  * @num_ds_enabled: Number of destination scalers enabled
  * @is_crtc_enabled: true if crtc is enabled
  * @overfetch_lines_on_top: extra lines to over fetch on top
- * @overfetch_lines_on_top: extra lines to over fetch on bottom
  */
 struct sde_hw_cp_cfg {
 	void *payload;
@@ -758,7 +751,6 @@ struct sde_hw_cp_cfg {
 	u32 num_ds_enabled;
 	bool is_crtc_enabled;
 	u32 overfetch_lines_on_top;
-	u32 overfetch_lines_on_bottom;
 };
 
 /**

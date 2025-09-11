@@ -798,16 +798,6 @@ int dsi_display_pre_kickoff(struct drm_connector *connector,
 int dsi_display_pre_commit(void *display,
 		struct msm_display_conn_params *params);
 
-/*
- * dsi_display_process_dcs_cmd_bitmask - process a bit mask to send multiple
- *                                       DCS command sets in a batch
- * @display: Pointer to private display structure
- * @params: Parameters for DCS command bit mask and peripheral flush
- * Returns: Zero on success
- */
-int dsi_display_process_dcs_cmd_bitmask(void *display,
-		struct msm_display_conn_params *params);
-
 /**
  * dsi_display_get_dst_format() - get dst_format from DSI display
  * @connector:        Pointer to drm connector structure
@@ -832,9 +822,6 @@ int dsi_display_cont_splash_config(void *display);
 int dsi_host_alloc_cmd_tx_buffer(struct dsi_display *display);
 int dsi_display_cmd_engine_enable(struct dsi_display *display);
 int dsi_display_cmd_engine_disable(struct dsi_display *display);
-bool phy_pll_bypass(struct dsi_display *display);
-void dsi_display_set_cmd_tx_ctrl_flags(struct dsi_display *display,
-        struct dsi_cmd_desc *cmd);
 #endif /* OPLUS_FEATURE_DISPLAY */
 
 /**
@@ -896,15 +883,6 @@ bool dsi_display_mode_match(const struct dsi_display_mode *mode1,
  * Return: error code
  */
 int dsi_display_update_transfer_time(void *display, u32 transfer_time);
-
-/**
- * dsi_display_avoid_cmd_transfer() - Avoid DSI command transfer
- * @display:     handle to display
- * @avoid_transfer: true to avoid transfer, false to allow transfer
- *
- * Return: error code
- */
-int dsi_display_avoid_cmd_transfer(void *display, bool avoid_transfer);
 
 /**
  * dsi_display_get_panel_scan_line() - get panel scan line

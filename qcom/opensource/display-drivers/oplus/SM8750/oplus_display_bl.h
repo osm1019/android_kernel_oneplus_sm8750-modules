@@ -61,13 +61,6 @@ struct oplus_apollo_bk {
 extern int backlight_smooth_enable;
 extern bool oplus_temp_compensation_wait_for_vsync_set;
 
-static struct backlight_8868_log {
-	u32 bl_count;
-	u32 backlight[BACKLIGHT_CACHE_MAX];
-	u32 Map_backlight[BACKLIGHT_CACHE_MAX];
-	struct timespec64 past_times[BACKLIGHT_CACHE_MAX];
-}oplus_bl_8868_log[DISPLAY_MAX];
-
 static struct backlight_log {
 	u32 bl_count;
 	u32 backlight[BACKLIGHT_CACHE_MAX];
@@ -348,7 +341,7 @@ int oplus_display_panel_get_global_hbm_status(void);
 void oplus_display_panel_set_global_hbm_status(int global_hbm_status);
 void oplus_panel_backlight_demura_dbv_switch(struct dsi_panel *panel, u32 bl_lvl);
 int oplus_panel_need_to_set_demura2_offset(struct dsi_panel *panel);
-int oplus_display_panel_set_demura2_offset(struct dsi_display *display);
+int oplus_display_panel_set_demura2_offset(void);
 void oplus_panel_set_lhbm_off_te_timestamp(struct dsi_panel *panel);
 
 bool is_support_apollo_bk(struct drm_connector *connector);
@@ -360,10 +353,7 @@ void oplus_panel_update_backlight(struct dsi_panel *panel,
 		struct mipi_dsi_device *dsi, u32 bl_lvl);
 u32 oplus_panel_silence_backlight(struct dsi_panel *panel, u32 bl_lvl);
 void oplus_printf_backlight_log(struct dsi_display *display, u32 bl_lvl);
-void oplus_printf_backlight_8868_log(struct dsi_display *display, u32 bl_lvl);
-int oplus_sync_panel_brightness_video(struct drm_encoder *drm_enc);
-int oplus_sync_backlight_vid_thread(void *data);
-int __oplus_vid_sync_backlight_thread_ctl(bool enable);
+
 /**
  * oplus_mult_frac() - oplus display backlight mult brightness
  * @bright: Display config brightness

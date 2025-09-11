@@ -25,7 +25,6 @@
 #include "sde_vm.h"
 #include "sde_fence.h"
 
-#include "oplus_bl_ic_ktz8868.h"
 #include "oplus_display_bl.h"
 #include "oplus_display_ext.h"
 #include "oplus_display_interface.h"
@@ -36,13 +35,6 @@
 #include "oplus_display_temp_compensation.h"
 #include "oplus_adfr.h"
 #include "oplus_debug.h"
-#include <uapi/linux/sched/types.h>
-
-#if defined(CONFIG_PXLW_IRIS)
-#include "dsi_iris_api.h"
-#endif
-
-#define KTZ8868_IC_BL_LEVEL_MAX          (2047)
 
 char oplus_global_hbm_flags = 0x0;
 static int enable_hbm_enter_dly_on_flags = 0;
@@ -59,7 +51,7 @@ bool oplus_temp_compensation_wait_for_vsync_set = false;
 struct oplus_apollo_bk apollo_bk;
 u32 g_oplus_save_pcc = 0;
 struct dc_apollo_pcc_sync dc_apollo;
-extern bool g_oplus_send_fps_code;
+
 
 int oplus_panel_parse_bl_cfg(struct dsi_panel *panel)
 {
@@ -360,14 +352,6 @@ void oplus_panel_backlight_demura_dbv_switch(struct dsi_panel *panel, u32 bl_lvl
 			panel->oplus_panel.bl_demura_mode = 2;
 			bl_demura_mode = DSI_CMD_DEMURA_DBV_MODE2;
 		}
-	} else if (!strcmp(panel->name, "AE055 P 3 A0026 dsc video mode panel")) {
-		if (1 < bl_lvl && bl_lvl < 1088) {
-			panel->oplus_panel.bl_demura_mode = 0;
-			bl_demura_mode = DSI_CMD_DEMURA_DBV_MODE0;
-		} else {
-			panel->oplus_panel.bl_demura_mode = 1;
-			bl_demura_mode = DSI_CMD_DEMURA_DBV_MODE1;
-		}
 	} else {
 		if (bl_lvl <= 3515)
 			return;
@@ -412,8 +396,7 @@ void oplus_panel_backlight_demura_dbv_switch(struct dsi_panel *panel, u32 bl_lvl
 		}
 	}
 
-	if ((panel->oplus_panel.bl_demura_mode != bl_demura_last_mode || oplus_last_backlight == 0)
-		&& (panel->power_mode == SDE_MODE_DPMS_ON))
+	if (panel->oplus_panel.bl_demura_mode != bl_demura_last_mode && panel->power_mode == SDE_MODE_DPMS_ON)
 		rc = dsi_panel_tx_cmd_set(panel, bl_demura_mode, false);
 	if (rc) {
 		DSI_ERR("[%s] failed to send bl_demura_mode, rc=%d\n", panel->name, rc);
@@ -435,19 +418,26 @@ int oplus_panel_need_to_set_demura2_offset(struct dsi_panel *panel)
 	return 0;
 }
 
-int oplus_display_panel_set_demura2_offset(struct dsi_display *display)
+int oplus_display_panel_set_demura2_offset(void)
 {
 	u32 bl_lvl = 0;
 	int rc = 0;
+	struct dsi_display *display = NULL;
 	struct dsi_panel *panel = NULL;
 	static bool last_hbm_status = false;
 	bool current_hbm_status = false;
 	u32 last_demura2_offset = 0;
 	u32 cmd_set_demura2_offset = DSI_CMD_SET_DEMURA2_OFFSET0;
 
+	display = oplus_display_get_current_display();
+	if (!display) {
+		DSI_ERR("[%s] failed to set demura2 offset, Invalid params\n", panel->name);
+		return -EINVAL;
+	}
+
 	panel = display->panel;
 	if (!panel) {
-		DSI_ERR("failed to set demura2 offset, Invalid params\n");
+		DSI_ERR("[%s] failed to set demura2 offset, Invalid params\n", panel->name);
 		return -EINVAL;
 	}
 
@@ -808,7 +798,7 @@ int oplus_sync_panel_brightness_v2(struct drm_encoder *drm_enc)
 	int rc = 0;
 	struct sde_encoder_phys_cmd *cmd_enc = NULL;
 	struct sde_encoder_phys_cmd_te_timestamp *te_timestamp;
-	u32 us_per_frame;
+	s64 us_per_frame;
 	u32 vsync_width;
 	u32 refresh_rate;
 	ktime_t last_te_timestamp;
@@ -838,9 +828,6 @@ int oplus_sync_panel_brightness_v2(struct drm_encoder *drm_enc)
 	display = c_conn->display;
 	if (display == NULL)
 		return -EFAULT;
-	if (display->panel->panel_mode != DSI_OP_CMD_MODE) {
-		return 0;
-	}
 
 	cmd_enc = to_sde_encoder_phys_cmd(phys_encoder);
 	if (cmd_enc == NULL) {
@@ -1103,8 +1090,7 @@ void oplus_panel_update_backlight(struct dsi_panel *panel,
 	if (!panel->oplus_panel.need_sync && panel->cur_mode->priv_info->oplus_priv_info.async_bl_delay) {
 		if (panel->oplus_panel.disable_delay_bl_count > 0) {
 			panel->oplus_panel.disable_delay_bl_count--;
-		} else if (panel->oplus_panel.disable_delay_bl_count == 0
-				&& !panel->oplus_panel.is_switching) {
+		} else if (panel->oplus_panel.disable_delay_bl_count == 0) {
 			oplus_apollo_async_bl_delay(panel);
 		} else {
 			DSI_INFO("invalid disable_delay_bl_count\n");
@@ -1117,28 +1103,11 @@ void oplus_panel_update_backlight(struct dsi_panel *panel,
 	else
 		inverted_dbv_bl_lvl = bl_lvl;
 
-	SDE_ATRACE_BEGIN("mipi_dsi_dcs_set_display_brightness");
-	if (!dsi) {
-		OPLUS_DSI_DEBUG("Oplus Brightness config No panel dsi\n");
-	} else {
-		mutex_lock(&panel->oplus_panel.panel_tx_lock);
-#if defined(CONFIG_PXLW_IRIS)
-		if (iris_is_chip_supported() && iris_is_pt_mode(panel->is_secondary))
-			rc = iris_update_backlight(inverted_dbv_bl_lvl);
-		else
-			rc = mipi_dsi_dcs_set_display_brightness(dsi, inverted_dbv_bl_lvl);
-
-		if (iris_is_chip_supported() && !iris_is_pt_mode(panel->is_secondary))
-			rc = iris_update_backlight_value(bl_lvl);
-#else /* CONFIG_PXLW_IRIS */
-		rc = mipi_dsi_dcs_set_display_brightness(dsi, inverted_dbv_bl_lvl);
-#endif /* CONFIG_PXLW_IRIS */
-		mutex_unlock(&panel->oplus_panel.panel_tx_lock);
-	}
-
+	mutex_lock(&panel->oplus_panel.panel_tx_lock);
+	rc = mipi_dsi_dcs_set_display_brightness(dsi, inverted_dbv_bl_lvl);
+	mutex_unlock(&panel->oplus_panel.panel_tx_lock);
 	if (rc < 0)
 		OPLUS_DSI_ERR("failed to update dcs backlight:%d\n", bl_lvl);
-	SDE_ATRACE_END("mipi_dsi_dcs_set_display_brightness");
 
 #ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
 	if (oplus_temp_compensation_is_supported()) {
@@ -1153,57 +1122,10 @@ void oplus_panel_update_backlight(struct dsi_panel *panel,
 	}
 #endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
 
-	if (panel->oplus_panel.is_switching) {
-		panel->oplus_panel.is_switching = false;
-	}
-
 	OPLUS_DSI_DEBUG("[%s] panel backlight changed: %d -> %d\n",
 			panel->oplus_panel.vendor_name, oplus_last_backlight, bl_lvl);
 
 	oplus_last_backlight = bl_lvl;
-}
-
-void oplus_printf_backlight_8868_log(struct dsi_display *display, u32 bl_lvl) {
-	struct timespec64 now;
-	struct tm broken_time;
-	static time64_t time_last = 0;
-	struct backlight_8868_log *map_bl_log;
-	u32 mapping_value = 0;
-	int i = 0;
-	int len = 0;
-	char map_backlight_log_buf[1548];
-
-	if (bl_lvl > KTZ8868_IC_BL_LEVEL_MAX) {
-		mapping_value = backlight_map[KTZ8868_IC_BL_LEVEL_MAX];
-	} else {
-		mapping_value = backlight_map[bl_lvl];
-	}
-
-	ktime_get_real_ts64(&now);
-	time64_to_tm(now.tv_sec, 0, &broken_time);
-	if (now.tv_sec - time_last >= 60) {
-		OPLUS_DSI_INFO("<%s> dsi_display_set_backlight time:%02d:%02d:%02d.%03ld,bl_lvl:%d, mapping_value ;%d\n",
-			display->panel->oplus_panel.vendor_name, broken_time.tm_hour, broken_time.tm_min,
-			broken_time.tm_sec, now.tv_nsec / 1000000, bl_lvl, mapping_value);
-		time_last = now.tv_sec;
-	}
-
-	map_bl_log = &oplus_bl_8868_log[DISPLAY_PRIMARY];
-	map_bl_log->backlight[map_bl_log->bl_count] = bl_lvl;
-	map_bl_log->Map_backlight[map_bl_log->bl_count] = mapping_value;
-	map_bl_log->past_times[map_bl_log->bl_count] = now;
-	map_bl_log->bl_count++;
-	if (map_bl_log->bl_count >= BACKLIGHT_CACHE_MAX) {
-		map_bl_log->bl_count = 0;
-		memset(map_backlight_log_buf, 0, sizeof(map_backlight_log_buf));
-		for (i = 0; i < BACKLIGHT_CACHE_MAX; i++) {
-			time64_to_tm(map_bl_log->past_times[i].tv_sec, 0, &broken_time);
-			len += snprintf(map_backlight_log_buf + len, sizeof(map_backlight_log_buf) - len,
-				"%02d:%02d:%02d.%03ld:Map:%d,Bl:%d,", broken_time.tm_hour, broken_time.tm_min,
-				broken_time.tm_sec, map_bl_log->past_times[i].tv_nsec / 1000000, map_bl_log->Map_backlight[i], map_bl_log->backlight[i]);
-		}
-		OPLUS_DSI_INFO("<%s> len:%d dsi_display_set_backlight_8868 %s\n", display->panel->oplus_panel.vendor_name, len, map_backlight_log_buf);
-	}
 }
 
 void oplus_printf_backlight_log(struct dsi_display *display, u32 bl_lvl) {
@@ -1284,152 +1206,4 @@ int oplus_panel_backlight_check(struct dsi_panel *panel)
 	}
 
 	return rc;
-}
-
-wait_queue_head_t sync_backlight_queue;
-int __oplus_vid_sync_backlight_thread_ctl(bool enable)
-{
-	static struct task_struct *sync_backlight_thread = NULL;
-	struct dsi_display *display = oplus_display_get_current_display();
-	struct sde_connector *sde_conn;
-	char tag_name[64];
-	u32 refresh_rate = display->panel->cur_mode->timing.refresh_rate;
-
-	if (!display || !display->panel) {
-		OPLUS_DSI_ERR("display is null\n");
-		return -EINVAL;
-	}
-	sde_conn = to_sde_connector(display->drm_conn);
-
-	snprintf(tag_name, sizeof(tag_name), "cur_refresh_rate[%d]-last_refresh_rate[%d]", refresh_rate, display->panel->oplus_panel.last_refresh_rate);
-
-	SDE_ATRACE_BEGIN(tag_name);
-	SDE_ATRACE_END(tag_name);
-
-	if(display->panel->panel_mode == DSI_OP_VIDEO_MODE) {
-		if(enable) {
-			if(!sync_backlight_thread) {
-				struct sched_param sp = {0};
-				init_waitqueue_head(&sync_backlight_queue);
-				if (sde_conn) {
-					atomic_set(&sde_conn->oplus_conn.bl_need_update, false);
-				}
-				sync_backlight_thread = kthread_run(oplus_sync_backlight_vid_thread, NULL, "sync_backlight_vid");
-				if (IS_ERR(sync_backlight_thread)) {
-					pr_err("Failed to create sync_backlight_thread.\n");
-					return -EINVAL;
-				}
-
-				sp.sched_priority = 16;
-				sched_setscheduler(sync_backlight_thread, SCHED_FIFO, &sp);
-			} else if (sde_conn->oplus_conn.bl_need_sync && display->panel->oplus_panel.last_refresh_rate == 120) {
-				atomic_set(&sde_conn->oplus_conn.bl_need_update, true);
-				wake_up_interruptible(&sync_backlight_queue);
-			}
-		} else {
-			if(sync_backlight_thread) {
-				kthread_stop(sync_backlight_thread);
-				sync_backlight_thread = NULL;
-			}
-		}
-	}
-
-	return 0;
-}
-
-int oplus_sync_backlight_vid_thread(void *data)
-{
-	struct dsi_display *display = get_main_display();
-	struct sde_connector *sde_conn;
-	int ret = 0;
-	u32 brightness = 0;
-
-	if (!display || !display->panel) {
-		OPLUS_DSI_ERR("display is null\n");
-		return -EFAULT;
-	}
-
-	sde_conn = to_sde_connector(display->drm_conn);
-	while(!kthread_should_stop()) {
-		wait_event_interruptible(sync_backlight_queue, atomic_read(&sde_conn->oplus_conn.bl_need_update));
-
-		brightness = sde_connector_get_property(sde_conn->base.state, CONNECTOR_PROP_SYNC_BACKLIGHT_LEVEL);
-		if((display->panel->power_mode == SDE_MODE_DPMS_ON) && brightness) {
-			char tag_name[64];
-			snprintf(tag_name, sizeof(tag_name), "%s: %d", display->display_type, brightness);
-
-			SDE_ATRACE_BEGIN(tag_name);
-			ret = oplus_set_brightness(sde_conn->bl_device, brightness);
-			SDE_ATRACE_END(tag_name);
-		}
-		sde_conn->oplus_conn.bl_need_sync = false;
-		atomic_set(&sde_conn->oplus_conn.bl_need_update, false);
-	}
-
-	return ret;
-}
-
-int oplus_sync_panel_brightness_video(struct drm_encoder *drm_enc)
-{
-	struct sde_encoder_virt *sde_enc = NULL;
-	struct sde_encoder_phys *phys_encoder = NULL;
-	struct sde_connector *sde_conn = NULL;
-	struct dsi_display *display = NULL;
-	int ret = 0;
-	u32 brightness = 0;
-	u32 refresh_rate = 0;
-
-	sde_enc = to_sde_encoder_virt(drm_enc);
-	phys_encoder = sde_enc->phys_encs[0];
-	if (!phys_encoder || !phys_encoder->connector) {
-		OPLUS_DSI_ERR("phys_encoder or connector is null\n");
-		return -EFAULT;
-	}
-
-	sde_conn = to_sde_connector(phys_encoder->connector);
-	if (!sde_conn) {
-		OPLUS_DSI_ERR("sde_conn is null\n");
-		return -EFAULT;
-	}
-	if (!sde_conn->base.state) {
-		OPLUS_DSI_ERR("sde_conn->base.state is null\n");
-		return -EFAULT;
-	}
-	if (sde_conn->connector_type != DRM_MODE_CONNECTOR_DSI) {
-		return 0;
-	}
-
-	display = sde_conn->display;
-	if (!display || !display->panel) {
-		OPLUS_DSI_ERR("display is null\n");
-		return -EFAULT;
-	}
-	if (display->panel->panel_mode != DSI_OP_VIDEO_MODE) {
-		return 0;
-	}
-	if (display->panel->cur_mode)
-		refresh_rate = display->panel->cur_mode->timing.refresh_rate;
-
-	if(sde_conn->oplus_conn.bl_need_sync && display->panel->oplus_panel.last_refresh_rate != 120) {
-		brightness = sde_connector_get_property(sde_conn->base.state, CONNECTOR_PROP_SYNC_BACKLIGHT_LEVEL);
-		if((display->panel->power_mode == SDE_MODE_DPMS_ON) && brightness) {
-			char tag_name[64];
-			snprintf(tag_name, sizeof(tag_name), "%s: %d", display->display_type, brightness);
-			atomic_set(&sde_conn->oplus_conn.bl_need_update, true);
-
-			SDE_ATRACE_BEGIN(tag_name);
-			ret = oplus_set_brightness(sde_conn->bl_device, brightness);
-			SDE_ATRACE_END(tag_name);
-			if (ret) {
-				OPLUS_DSI_ERR("Failed to set brightness\n");
-				return ret;
-			}
-		}
-		sde_conn->oplus_conn.bl_need_sync = false;
-		atomic_set(&sde_conn->oplus_conn.bl_need_update, false);
-	}
-	display->panel->oplus_panel.last_refresh_rate = refresh_rate;
-	g_oplus_send_fps_code = false;
-
-	return ret;
 }

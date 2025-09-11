@@ -34,8 +34,6 @@
 #define MAX_KICKOFF_TIMEOUT_MS                  100000
 
 #define MAX_TE_PROFILE_COUNT		5
-#define IDLE_FPS            1
-#define HZ_240              240
 /**
  * enum sde_enc_split_role - Role this physical encoder will play in a
  *	split-panel configuration, where one panel is master, and others slaves.
@@ -86,28 +84,12 @@ enum sde_enc_irqs {
 	SDE_ENC_IRQ_MAX
 };
 
-/**
- * quad_pipe_cwb_roi - Region of interest for cwb in quadpipe topology
- * CWB_ROI_DISABLED: cwb roi is disabled
- * CWB_LEFT_ROI:     cwb roi is set to left
- * CWB_CENTER_ROI:   cwb roi is set to center
- * CWB_RIGHT_ROI:    cwb roi is set to right
- */
-enum quad_pipe_cwb_roi {
-	CWB_ROI_DISABLED,
-	CWB_LEFT_ROI,
-	CWB_CENTER_ROI,
-	CWB_RIGHT_ROI,
-};
-
 struct sde_encoder_phys;
 
 /**
  * struct sde_encoder_virt_ops - Interface the containing virtual encoder
  *	provides for the physical encoders to use to callback.
  * @handle_vblank_virt:	Notify virtual encoder of vblank IRQ reception
- *			Note: This is called from IRQ handler context.
- * @handle_empulse_virt:	Notify virtual encoder of empulse IRQ reception
  *			Note: This is called from IRQ handler context.
  * @handle_underrun_virt: Notify virtual encoder of underrun IRQ reception
  *			Note: This is called from IRQ handler context.
@@ -117,8 +99,6 @@ struct sde_encoder_phys;
  */
 struct sde_encoder_virt_ops {
 	void (*handle_vblank_virt)(struct drm_encoder *parent,
-			struct sde_encoder_phys *phys);
-	void (*handle_empulse_virt)(struct drm_encoder *parent,
 			struct sde_encoder_phys *phys);
 	void (*handle_underrun_virt)(struct drm_encoder *parent,
 			struct sde_encoder_phys *phys);
@@ -150,8 +130,6 @@ struct sde_encoder_virt_ops {
  *				resources that this phys_enc is using.
  *				Expect no overlap between phys_encs.
  * @control_vblank_irq		Register/Deregister for VBLANK IRQ
- * @control_esync_vsync_irq	Register/Deregister for esync vsync IRQ
- * @control_empulse_irq:	Register/Deregister for EM pulse IRQ
  * @wait_for_commit_done:	Wait for hardware to have flushed the
  *				current pending frames to hardware
  * @wait_for_tx_complete:	Wait for hardware to transfer the pixels
@@ -213,8 +191,6 @@ struct sde_encoder_phys_ops {
 			struct sde_encoder_hw_resources *hw_res,
 			struct drm_connector_state *conn_state);
 	int (*control_vblank_irq)(struct sde_encoder_phys *enc, bool enable);
-	int (*control_esync_vsync_irq)(struct sde_encoder_phys *enc, bool enable);
-	int (*control_empulse_irq)(struct sde_encoder_phys *enc, bool enable);
 	int (*wait_for_commit_done)(struct sde_encoder_phys *phys_enc);
 	int (*wait_for_tx_complete)(struct sde_encoder_phys *phys_enc);
 	int (*wait_for_vblank)(struct sde_encoder_phys *phys_enc);
@@ -260,8 +236,6 @@ struct sde_encoder_phys_ops {
  * @INTR_IDX_PINGPONG: Pingpong done interrupt for cmd mode panel
  * @INTR_IDX_UNDERRUN: Underrun interrupt for video and cmd mode panel
  * @INTR_IDX_WD_TIMER: Watchdog interrupt
- * @INTR_IDX_ESYNC_EMSYNC:   Esync interrupt for video mode panel.
- * @INTR_IDX_ESYNC_VSYNC:   Esync Vsync interrupt for video hybrid mode panel.
  * @INTR_IDX_CTL_START:Control start interrupt to indicate the frame start
  * @INTR_IDX_CTL_DONE: Control done interrupt indicating the control path being idle
  * @INTR_IDX_RDPTR:    Readpointer done interrupt for cmd mode panel
@@ -286,8 +260,6 @@ enum sde_intr_idx {
 	INTR_IDX_PINGPONG,
 	INTR_IDX_UNDERRUN,
 	INTR_IDX_WD_TIMER,
-	INTR_IDX_ESYNC_EMSYNC,
-	INTR_IDX_ESYNC_VSYNC,
 	INTR_IDX_CTL_START,
 	INTR_IDX_CTL_DONE,
 	INTR_IDX_RDPTR,
@@ -335,12 +307,6 @@ enum sde_transition_state {
 	ARP_MODE1_IDLE,
 };
 
-enum sde_min_sr_state {
-	SDE_MIN_SR_COMPLETE,
-	SDE_MIN_SR_IN_PROGRESS,
-	SDE_MIN_SR_SCHEDULED,
-};
-
 struct sde_encoder_vrr_cfg {
 	bool arp_mode_hw_te;
 	bool arp_mode_sw_timer_mode;
@@ -357,7 +323,6 @@ struct sde_encoder_vrr_cfg {
 	struct hrtimer freq_step_timer;
 	struct hrtimer arp_transition_timer;
 	struct hrtimer self_refresh_timer;
-	u16 min_sr_state;
 	struct hrtimer backlight_timer;
 };
 
@@ -396,7 +361,6 @@ struct sde_encoder_vrr_cfg {
  * @enc_spinlock:	Virtual-Encoder-Wide Spin Lock for IRQ purposes
  * @enable_state:	Enable state tracking
  * @vblank_refcount:	Reference count of vblank request
- * @empulse_irq_refcount: Reference count of empulse request
  * @wbirq_refcount:	Reference count of wb irq request
  * @vsync_cnt:		Vsync count for the physical encoder
  * @last_vsync_timestamp:	store last vsync timestamp
@@ -412,16 +376,11 @@ struct sde_encoder_vrr_cfg {
  *                              only for writeback encoder and the counter keeps
  *                              increasing for other type of encoders.
  * @pending_kickoff_wq:		Wait queue for blocking until kickoff completes
- * @empulse_backup_timer: Timer to simulate EM pulse IRQ when idle
- * @empulse_notification_sim: whether the last enabled EM pulse notification
- *                            source was the timer, as opposed to the IRQ
- * @empulse_count: Software EM pulse count for the physical encoder
  * @kickoff_timeout_ms:		kickoff timeout in mill seconds
  * @irq:			IRQ tracking structures
  * @has_intf_te:		Interface TE configuration support
  * @cont_splash_enabled:	Variable to store continuous splash settings.
  * @in_clone_mode		Indicates if encoder is in clone mode ref@CWB
- * @quad_cwb_roi		Indicates ROI's for cwb in quad pipe
  * @vfp_cached:			cached vertical front porch to be used for
  *				programming ROT and MDP fetch start
  * @pf_time_in_us:		Programmable fetch time in micro-seconds
@@ -474,7 +433,6 @@ struct sde_encoder_phys {
 	enum sde_enc_enable_state enable_state;
 	struct mutex *vblank_ctl_lock;
 	atomic_t vblank_refcount;
-	atomic_t empulse_irq_refcount;
 	atomic_t wbirq_refcount;
 	atomic_t vsync_cnt;
 	ktime_t last_vsync_timestamp;
@@ -483,15 +441,11 @@ struct sde_encoder_phys {
 	atomic_t pending_retire_fence_cnt;
 	atomic_t pending_ctl_start_cnt;
 	wait_queue_head_t pending_kickoff_wq;
-	struct hrtimer empulse_backup_timer;
-	bool empulse_notification_sim;
-	atomic_t empulse_count;
 	u32 kickoff_timeout_ms;
 	struct sde_encoder_irq irq[INTR_IDX_MAX];
 	bool has_intf_te;
 	bool cont_splash_enabled;
 	bool in_clone_mode;
-	enum quad_pipe_cwb_roi quad_cwb_roi;
 	int vfp_cached;
 	u32 pf_time_in_us;
 	bool sde_hw_fence_error_status;
@@ -673,11 +627,10 @@ struct sde_encoder_wait_info {
 /**
  * sde_encoder_phys_vid_init - Construct a new video mode physical encoder
  * @p:	Pointer to init params structure
- * @is_lb_display: true for lb encoder, false otherwise
  * Return: Error code or newly allocated encoder
  */
 struct sde_encoder_phys *sde_encoder_phys_vid_init(
-		struct sde_enc_phys_init_params *p, bool is_lb_display);
+		struct sde_enc_phys_init_params *p);
 
 /**
  * sde_encoder_phys_cmd_init - Construct a new command mode physical encoder
@@ -788,7 +741,7 @@ u32 sde_encoder_helper_get_bw_update_time_lines(struct sde_encoder_virt *sde_enc
 
 /**
  * sde_encoder_helper_calc_vsync_count - calculates the vsync_count value
- * @sde_enc: Pointer to drm encoder structure
+ * @drm_enc: Pointer to drm encoder structure
  * @vtotal: vtotal of the mode
  * @vrefresh: vrefresh of the mode
  */
@@ -1097,37 +1050,4 @@ void sde_encoder_helper_setup_misr(struct sde_encoder_phys *phys_enc,
 int sde_encoder_helper_collect_misr(struct sde_encoder_phys *phys_enc,
 		bool nonblock, u32 *misr_value);
 
-/**
- * sde_encoder_helper_get_ctl_flush - helper function to get flush register value
- * @phys_enc: Pointer to physical encoder structure
- * @Return: flush register value
- */
-static inline u32 sde_encoder_helper_get_ctl_flush(struct sde_encoder_phys *phys_enc)
-{
-	struct sde_hw_ctl *hw_ctl;
-
-	hw_ctl = phys_enc->hw_ctl;
-
-	if (!hw_ctl || !hw_ctl->ops.get_flush_register)
-		return 0;
-
-	return hw_ctl->ops.get_flush_register(hw_ctl);
-}
-
-/**
- * sde_encoder_helper_flush_in_sync_mode - helper function to get flush sync mode
- * @phys_enc: Pointer to physical encoder structure
- * @Return: true for sync mode, false for async
- */
-static inline bool sde_encoder_helper_flush_in_sync_mode(struct sde_encoder_phys *phys_enc)
-{
-	struct sde_hw_ctl *hw_ctl;
-
-	hw_ctl = phys_enc->hw_ctl;
-
-	if (!hw_ctl || !hw_ctl->ops.get_flush_sync_mode)
-		return false;
-
-	return hw_ctl->ops.get_flush_sync_mode(hw_ctl);
-}
 #endif /* __sde_encoder_phys_H__ */

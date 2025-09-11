@@ -107,6 +107,10 @@ static void aiqe_get_common_values_v1(struct sde_hw_cp_cfg *cfg,
 
 	aiqe_cmn->height = cfg->panel_height;
 	aiqe_cmn->width = cfg->panel_width;
+	if (mask_value & (1 << FEATURE_MDNIE_ART))
+		aiqe_cmn->irqs = BIT(4);
+	else
+		aiqe_cmn->irqs = 0;
 }
 
 bool mdnie_art_in_progress(struct sde_aiqe_top_level *aiqe_top)
@@ -126,7 +130,6 @@ void get_mdnie_art_frame_count(u32 *mdnie_art_frame_count, u32 art_param)
 	art_slope = (art_param & 0xF0000) >> 16;
 	*mdnie_art_frame_count = 1 << art_slope;
 	++(*mdnie_art_frame_count);
-	SDE_EVT32(*mdnie_art_frame_count);
 }
 
 void aiqe_deinit(struct sde_aiqe_top_level *aiqe_top)

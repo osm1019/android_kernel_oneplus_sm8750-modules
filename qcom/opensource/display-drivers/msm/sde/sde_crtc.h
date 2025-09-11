@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -120,7 +120,6 @@ struct sde_crtc_retire_event {
  * @hw_ds:	DS HW driver context
  * @encoder:	Encoder attached to this lm & ctl
  * @mixer_op_mode: mixer blending operation mode
- * @is_lb_mixer: True for mixers used in cac first pass
  */
 struct sde_crtc_mixer {
 	struct sde_hw_mixer *hw_lm;
@@ -129,7 +128,6 @@ struct sde_crtc_mixer {
 	struct sde_hw_ds *hw_ds;
 	struct drm_encoder *encoder;
 	u32 mixer_op_mode;
-	bool is_lb_mixer;
 };
 
 /**
@@ -381,7 +379,6 @@ enum sde_crtc_hw_fence_flags {
  * @framedone_event_notify_enabled: flag to indicate if framedone notify is enabled or not
  * @mdnie_art_event_notify_enabled: flag to indicate if art done notify is enabled or not
  * @copr_status_event_notify_enabled: flag to indicate if copr status notify is enabled or not
- * @mdnie_ipc_disabled: flag to indicate if mdnie ipc is disabled or not
  * @aiqe_top_level: aiqe top level mutex and mask
  * @ai_scaler_res: struct stores ai scaler enable flag and resolution
  * @skip_blend_planes: array holding skip blend plane list
@@ -503,7 +500,6 @@ struct sde_crtc {
 	bool framedone_event_notify_enabled;
 	bool mdnie_art_event_notify_enabled;
 	bool copr_status_event_notify_enabled;
-	bool mdnie_ipc_disabled;
 
 	struct sde_aiqe_top_level aiqe_top_level;
 	struct sde_io_res ai_scaler_res;
@@ -572,11 +568,6 @@ struct sde_line_insertion_param {
  * @cont_splash_populated: State was populated as part of cont. splash
  * @param: sde line insertion parameters
  * @hwfence_in_fences_set: input hw fences are configured for the commit
- * @is_loopback_mode: boolean variable to indicate if crtc is running in loopback mode
- * @in_loopback_transition: boolean variable to indicate if crtc is transitioning in or out
-				of loopback mode
- * @cac_mixer_roi: stores the mixer width and height for loopback mixers in crtc
- * @num_prim_mixers: number of mixers driving the primary display in loopback usecase
  */
 struct sde_crtc_state {
 	struct drm_crtc_state base;
@@ -619,10 +610,6 @@ struct sde_crtc_state {
 	bool cont_splash_populated;
 	struct sde_line_insertion_param line_insertion;
 	bool hwfence_in_fences_set;
-	bool is_loopback_mode;
-	bool in_loopback_transition;
-	struct sde_io_res cac_mixer_roi[MAX_MIXERS_PER_CRTC];
-	uint32_t num_prim_mixers;
 };
 
 enum sde_crtc_irq_state {
@@ -1230,12 +1217,6 @@ struct drm_encoder *sde_crtc_get_src_encoder_of_clone(struct drm_crtc *crtc);
  */
 void _sde_crtc_vm_release_notify(struct drm_crtc *crtc);
 
-/*
- * _sde_crtc_vm_reclaim_notify- notify usermode in Primary VM to trigger commit for reclaimimg
- *	resources released by trusted VM
- */
-void _sde_crtc_vm_reclaim_notify(struct drm_crtc *crtc);
-
 /**
  * sde_crtc_calc_vpadding_param - calculate vpadding parameters
  * @state: Pointer to DRM crtc state object
@@ -1254,50 +1235,4 @@ int sde_crtc_calc_vpadding_param(struct drm_crtc_state *state, u32 crtc_y, u32 c
  */
 void sde_crtc_mdnie_art_event_notify(struct drm_crtc *crtc);
 
-/**
- * sde_crtc_force_async_mode - force hw flush sync mode to async
- * @enc:Pointer to drm_encoder
- * @crtc_state: Pointer to DRM crtc state object
- */
-void sde_crtc_force_async_mode(struct drm_encoder *enc, struct drm_crtc_state *crtc_state);
-
-/**
- * sde_get_primary_ctl_in_lb - Returns primary ctl for loopback encoder
- * @crtc_state: Pointer to DRM crtc state object
- */
-struct sde_hw_ctl *sde_get_primary_ctl_in_lb(struct drm_crtc_state *crtc_state);
-
-/**
- * sde_crtc_state_in_lb_mode - Returns true if crtc state is in loopback mode, false otherwise
- * @state: pointer to crtc state
- */
-bool sde_crtc_state_in_lb_mode(struct drm_crtc_state *state);
-
-/**
- * sde_crtc_in_lb_transition - Checks if crtc is transitioning from loopback cac
- *				to cac disable or vice-versa
- * @old_state: pointer to old crtc state
- * @new_state: pointer to new crtc state
- */
-bool sde_crtc_in_lb_transition(struct drm_crtc_state *old_state,
-			struct drm_crtc_state *new_state);
-
-/**
- * sde_crtc_is_power_on_frame - checks whether the current commit is a power on commit
- * @crtc: pointer to crtc
- */
-static inline bool sde_crtc_is_power_on_frame(struct drm_crtc *crtc)
-{
-	if (!crtc || !crtc->state)
-		return false;
-
-	SDE_EVT32(crtc->state->active_changed, crtc->state->active);
-	return crtc->state->active_changed && crtc->state->active;
-}
-
-/**
- * sde_crtc_copr_status_event_notify - notify copr status to userspace
- * @crtc: Pointer to drm_crtc.
- */
-void sde_crtc_copr_status_event_notify(struct drm_crtc *crtc);
 #endif /* _SDE_CRTC_H_ */

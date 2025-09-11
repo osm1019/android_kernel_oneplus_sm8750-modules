@@ -34,7 +34,6 @@ struct oplus_display_ops {
 
 	/* commit */
 	void (*encoder_kickoff)(struct drm_encoder *drm_enc, struct sde_encoder_virt *sde_enc);
-	void (*encoder_kickoff_post)(struct drm_encoder *drm_enc, struct sde_encoder_virt *sde_enc);
 	void (*display_validate_mode_change_pre)(struct dsi_display *display);
 	void (*display_validate_mode_change_post)(struct dsi_display *dsi_display,
 			struct dsi_display_mode *cur_mode,
@@ -42,7 +41,7 @@ struct oplus_display_ops {
 	void (*dsi_phy_hw_dphy_enable)(u32 *glbl_str_swi_cal_sel_ctrl, u32 *glbl_hstx_str_ctrl_0);
 	void (*connector_update_dirty_properties)(struct sde_connector *c_conn, int idx);
 	void (*encoder_off_work)(struct sde_encoder_virt *sde_enc);
-	void (*encoder_trigger_start)(struct sde_encoder_phys *cur_master);
+	void (*encoder_trigger_start)(void);
 	void (*encoder_phys_cmd_te_rd_ptr_irq_pre)(struct sde_encoder_phys *phys_enc,
 			struct sde_encoder_phys_cmd_te_timestamp *te_timestamp);
 	void (*encoder_phys_cmd_te_rd_ptr_irq_post)(struct sde_encoder_phys *phys_enc);
@@ -53,7 +52,6 @@ struct oplus_display_ops {
 
 	/* power on */
 	void (*bridge_pre_enable)(struct dsi_display *display, struct dsi_display_mode *mode);
-	void (*bridge_post_enable)(struct dsi_display *display, struct dsi_display_mode *mode);
 	void (*display_enable_pre)(struct dsi_display *display);
 	void (*display_enable_mid)(struct dsi_display *display);
 	void (*display_enable_post)(struct dsi_display *display);
@@ -67,7 +65,6 @@ struct oplus_display_ops {
 
 	/* power off */
 	void (*display_disable_post)(struct dsi_display *display);
-	void (*panel_disable_pre)(struct dsi_panel *panel);
 	void (*panel_disable_post)(struct dsi_panel *panel);
 	int (*panel_power_off)(struct dsi_panel *panel);
 
@@ -82,7 +79,6 @@ struct oplus_display_ops {
 	bool (*display_check_status_pre)(struct dsi_panel *panel);
 	int (*display_check_status_post)(struct dsi_display *display);
 	int (*display_validate_status)(struct dsi_display *display);
-	void (*connector_check_status_work)(void *dsi_display);
 
 	/* starting up/down */
 	void (*display_dev_probe)(struct dsi_display *display);
@@ -111,20 +107,14 @@ struct oplus_display_ops {
 	void (*dsi_message_tx_pre)(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *cmd_desc);
 	void (*dsi_message_tx_post)(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *cmd_desc);
 	int (*panel_parse_cmd_sets_sub)(struct dsi_panel_cmd_set *cmd, const char *state);
-	void (*dsi_ctrl_configure_pre)(struct dsi_ctrl *dsi_ctrl, u32 *sched_line_no);
 
 	/* aod */
 	void (*panel_set_lp1)(struct dsi_panel *panel);
 	void (*panel_set_lp2)(struct dsi_panel *panel);
 	void (*panel_set_nolp_pre)(struct dsi_panel *panel);
 	void (*panel_set_nolp_post)(struct dsi_panel *panel);
-
-	void (*wait_for_wr_ptr_pre)(struct drm_connector *conn);
-	void (*handle_framedone_timeout_pre)(struct drm_connector *conn);
 };
 
 extern struct oplus_display_ops oplus_display_ops;
-#ifdef OPLUS_FEATURE_TP_BASIC
-extern struct oplus_display_notify_tp_ops oplus_display_notify_tp_ops;
-#endif /* OPLUS_FEATURE_TP_BASIC */
+
 #endif /* __OPLUS_DISPLAY_INTERFACE_H__ */

@@ -160,12 +160,6 @@ struct sde_sim_arp_panel_mode {
 	u32 mode;
 };
 
-enum sde_enc_periph_cmd_state {
-	SDE_NO_CMD_SCHEDULED,
-	SDE_CMD_SCHEDULED,
-	SDE_CMD_DONE
-};
-
 /**
  * sde_encoder_vrr_info - variable refresh info
  * @frame_interval:     Frame interval configuration
@@ -177,7 +171,6 @@ enum sde_enc_periph_cmd_state {
  * @debugfs_arp_te_in_ms:   ARP simulator TE value in ms
  * @debugfs_freq_array:    Freqency stepping array provided for simulation
  * @debugfs_freq_pattern:  Frequency pattern provided for simulation
- * @vhm_cmd_in_progress:   Whether a VHM related command is currently enqueued
  */
 struct sde_encoder_vrr_info {
 	u32 frame_interval;
@@ -188,7 +181,6 @@ struct sde_encoder_vrr_info {
 	u32 debugfs_arp_te_in_ms;
 	u32 *debugfs_freq_array;
 	struct msm_debugfs_freq_pattern *debugfs_freq_pattern;
-	u32 vhm_cmd_in_progress;
 };
 
 /*
@@ -231,6 +223,20 @@ enum sde_sim_qsync_event {
 	SDE_SIM_QSYNC_EVENT_TE_TRIGGER
 };
 
+/*
+ * enum sde_multi_te_states - enum to indicate the states of multi-TE
+ * @SDE_MULTI_TE_NONE: multi-te not enabled
+ * @SDE_MULTI_TE_ENTER: frame entering multi-te
+ * @SDE_MULTI_TE_SESSION: frames in multi-te session
+ * @SDE_MULTI_TE_EXIT: frame exiting multi-te
+ */
+enum sde_multi_te_states {
+	SDE_MULTI_TE_NONE,
+	SDE_MULTI_TE_ENTER,
+	SDE_MULTI_TE_SESSION,
+	SDE_MULTI_TE_EXIT,
+};
+
 /* Frame rate value to trigger the watchdog TE in 200 us */
 #define SDE_SIM_QSYNC_IMMEDIATE_FPS 5000
 
@@ -248,7 +254,6 @@ enum sde_sim_qsync_event {
  * @phys_encs:		Container of physical encoders managed.
  * @phys_vid_encs:	Video physical encoders for panel mode switch.
  * @phys_cmd_encs:	Command physical encoders for panel mode switch.
- * @phys_lb_encs:	Loopback physical encoders for cac loopback mode
  * @cur_master:		Pointer to the current master in this mode. Optimization
  *			Only valid after enable. Cleared as disable.
  * @hw_pp		Handle to the pingpong blocks used for the display. No.
@@ -294,8 +299,7 @@ enum sde_sim_qsync_event {
  * @input_event_work:		worker to handle input device touch events
  * @esd_trigger_work:		worker to handle esd trigger
  * @self_refresh_work:		worker to handle self refresh
- * @backlight_cmd_work:		worker to handle smooth dimming in vrr
- * @backlight_sr_work:		worker to handle backlight self refresh
+ * @self_refresh_work:		worker to handle smooth dimming in vrr
  * @input_handler:			handler for input device events
  * @topology:                   topology of the display
  * @vblank_enabled:		boolean to track userspace vblank vote
@@ -330,6 +334,8 @@ enum sde_sim_qsync_event {
  * @ops:                        Encoder ops from init function
  * @old_vsyc_count:             Intf tearcheck vsync_count for old mode.
  * @mode_switch:                flag to indicate its a fps/resolution switch frame.
+ * @multi_te_state:             enum to indicate the multi-te states.
+ * @multi_te_fps:               refresh rate of multi-TE.
  * @sde_cesta_client:           Point to sde_cesta client for the encoder.
  * @cesta_enable_frame:         Boolean indicating if its first frame after power-collapse/resume
  *				which requires special handling for cesta.
@@ -339,7 +345,6 @@ enum sde_sim_qsync_event {
  *					cmd mode when previous frame ctl-done is very close to
  *					wakeup/panic windows.
  * @intf_master:		Interface Idx for the master interface
- * @cesta_scc_override:	        Boolean indicating SCC CTRL settings have been overridden.
  */
 struct sde_encoder_virt {
 	struct drm_encoder base;
@@ -354,7 +359,6 @@ struct sde_encoder_virt {
 	struct sde_encoder_phys *phys_encs[MAX_PHYS_ENCODERS_PER_VIRTUAL];
 	struct sde_encoder_phys *phys_vid_encs[MAX_PHYS_ENCODERS_PER_VIRTUAL];
 	struct sde_encoder_phys *phys_cmd_encs[MAX_PHYS_ENCODERS_PER_VIRTUAL];
-	struct sde_encoder_phys *phys_lb_encs[MAX_PHYS_ENCODERS_PER_VIRTUAL];
 	struct sde_encoder_phys *cur_master;
 	struct sde_hw_pingpong *hw_pp[MAX_CHANNELS_PER_ENC];
 	struct sde_hw_dsc *hw_dsc[MAX_CHANNELS_PER_ENC];
@@ -393,7 +397,6 @@ struct sde_encoder_virt {
 	struct kthread_work esd_trigger_work;
 	struct kthread_work self_refresh_work;
 	struct kthread_work backlight_cmd_work;
-	struct kthread_delayed_work backlight_sr_work;
 
 	struct input_handler *input_handler;
 	bool vblank_enabled;
@@ -424,13 +427,14 @@ struct sde_encoder_virt {
 	bool dpu_ctl_op_sync;
 	struct sde_encoder_ops ops;
 	u32 mode_switch;
+	enum sde_multi_te_states multi_te_state;
+	u32 multi_te_fps;
 	struct sde_cesta_client *cesta_client;
 	bool cesta_enable_frame;
 	bool cesta_force_active;
 	bool cesta_force_auto_active_db_update;
 	bool cesta_reset_intf_master;
 	u32 intf_master;
-	bool cesta_scc_override;
 };
 
 #define to_sde_encoder_virt(x) container_of(x, struct sde_encoder_virt, base)
@@ -732,13 +736,6 @@ void sde_encoder_enable_recovery_event(struct drm_encoder *encoder);
 bool sde_encoder_in_clone_mode(struct drm_encoder *enc);
 
 /**
- * sde_encoder_is_self_refresh_completed - checks if self refresh is completed
- * @sde_enc:    Pointer to sde encoder structure
- * @Return:     true if self refresh is completed
- */
-bool sde_encoder_is_self_refresh_completed(struct sde_encoder_virt *sde_enc);
-
-/**
  * sde_encoder_in_video_psr - checks if it is in video psr panel
  * @drm_enc:    Pointer to drm encoder structure
  * @Return:     true if successful
@@ -966,22 +963,6 @@ static inline u32 sde_encoder_get_pclk_factor(struct drm_encoder *drm_enc)
 }
 
 /*
- * sde_encoder_is_loopback_display - check if encoder is used in the loopback path
- * @drm_enc:	Pointer to drm encoder structure
- * @Return: true for loopback encoder, false otherwise
- */
-static inline bool sde_encoder_is_loopback_display(struct drm_encoder *drm_enc)
-{
-	struct sde_encoder_virt *sde_enc;
-
-	if (!drm_enc)
-		return false;
-
-	sde_enc = to_sde_encoder_virt(drm_enc);
-	return sde_enc &&
-		(sde_enc->disp_info.capabilities & MSM_DISPLAY_LOOPBACK_MODE);
-}
-/*
  * sde_encoder_is_line_insertion_supported - get line insertion
  * feature bit value from panel
  * @drm_enc:    Pointer to drm encoder structure
@@ -1050,20 +1031,6 @@ enum hrtimer_restart sde_encoder_phys_phys_self_refresh_helper(struct hrtimer *t
 enum hrtimer_restart sde_encoder_phys_backlight_timer_cb(struct hrtimer *timer);
 
 /**
- * sde_encoder_phys_cancel_backlight_timer - cancel any scheduled backlight timer
- * @drm_enc:    Pointer to drm encoder structure
- */
-void sde_encoder_phys_cancel_backlight_timer(struct drm_encoder *drm_enc);
-
-/**
- * sde_encoder_handle_video_psr_self_refresh - Handle incremental backlight requirement
- * @sde_enc: Pointer to sde encoder
- * @send_still_cmd: True if still cmd needs to be sent along with self refresh
- */
-void sde_encoder_handle_video_psr_self_refresh(struct sde_encoder_virt *sde_enc,
-		bool send_still_cmd);
-
-/**
  * sde_encoder_get_freq_pattern - Get the frequency pattern for
  *                               given frame interval and usecase
  * @drm_enc: pointer to drm encoder
@@ -1111,13 +1078,6 @@ void sde_encoder_begin_commit(struct drm_encoder *drm_enc);
 void sde_encoder_complete_commit(struct drm_encoder *drm_enc);
 
 /**
- * sde_encoder_post_commit_bl_sr_work - handles work to be done post commit
- *                                      related to backlight self refresh
- * @drm_enc: pointer to drm encoder
- */
-void sde_encoder_post_commit_bl_sr_work(struct drm_encoder *drm_enc);
-
-/**
  * sde_encoder_get_cesta_client - return the SDE CESTA client
  * @drm_enc: pointer to drm encoder
  */
@@ -1159,11 +1119,4 @@ static inline int sde_encoder_register_misr_event(struct drm_encoder *drm_enc, b
 
 	return 0;
 }
-
-/**
- * sde_encoder_copr_allow_notify - check if copr notify is allowed
- * @drm_enc: pointer to drm encoder
- * @Return: true if copr notify is allowed
- */
-bool sde_encoder_copr_allow_notify(struct drm_encoder *drm_enc);
 #endif /* __SDE_ENCODER_H__ */

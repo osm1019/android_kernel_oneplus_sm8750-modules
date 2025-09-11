@@ -20,11 +20,6 @@
 #include "sde_dbg.h"
 #include "oplus_debug.h"
 
-#if defined(CONFIG_PXLW_IRIS)
-#include "pw_iris_loop_back.h"
-#include "dsi_iris_api.h"
-#endif
-
 #define DSI_PANEL_OPLUS_DUMMY_VENDOR_NAME  "PanelVendorDummy"
 #define DSI_PANEL_OPLUS_DUMMY_MANUFACTURE_NAME  "dummy1024"
 
@@ -68,23 +63,81 @@ struct LCM_setting_table {
 
 int oplus_display_panel_get_id(void *buf)
 {
-	struct panel_id *panel_id = buf;
-	int display_id = panel_id->DA;
 	struct dsi_display *display = get_main_display();
+	int ret = 0;
+	int rc = 0;
+	unsigned char read[30];
+	struct panel_id *panel_rid = buf;
+	int panel_id = panel_rid->DA;
 
-	if (display_id == 1)
+	if (panel_id == 1)
 		display = get_sec_display();
 
-	if (!display) {
+	if (!display || !display->panel) {
 		OPLUS_DSI_ERR("display is null\n");
+		ret = -1;
+		return ret;
+	}
+
+	if (display->panel->power_mode == SDE_MODE_DPMS_ON) {
+		if (display->panel->oplus_panel.panel_id_switch_page) {
+			mutex_lock(&display->display_lock);
+			mutex_lock(&display->panel->panel_lock);
+			rc = dsi_panel_tx_cmd_set(display->panel, DSI_CMD_PANEL_INFO_SWITCH_PAGE, false);
+			mutex_unlock(&display->panel->panel_lock);
+			mutex_unlock(&display->display_lock);
+			if (rc < 0) {
+				DSI_ERR("Read panel id switch page failed!\n");
+			}
+		}
+		mutex_lock(&display->display_lock);
+		ret = dsi_display_read_panel_reg(display, 0xDA, read, 1);
+		mutex_unlock(&display->display_lock);
+
+		if (ret < 0) {
+			OPLUS_DSI_ERR("failed to read DA ret=%d\n", ret);
+			return -EINVAL;
+		}
+
+		panel_rid->DA = (uint32_t)read[0];
+		mutex_lock(&display->display_lock);
+		ret = dsi_display_read_panel_reg(display, 0xDB, read, 1);
+		mutex_unlock(&display->display_lock);
+
+		if (ret < 0) {
+			OPLUS_DSI_ERR("failed to read DB ret=%d\n", ret);
+			return -EINVAL;
+		}
+
+		panel_rid->DB = (uint32_t)read[0];
+		mutex_lock(&display->display_lock);
+		ret = dsi_display_read_panel_reg(display, 0xDC, read, 1);
+		mutex_unlock(&display->display_lock);
+
+		if (ret < 0) {
+			OPLUS_DSI_ERR("failed to read DC ret=%d\n", ret);
+			return -EINVAL;
+		}
+
+		panel_rid->DC = (uint32_t)read[0];
+
+		if (display->panel->oplus_panel.panel_id_switch_page) {
+			mutex_lock(&display->display_lock);
+			mutex_lock(&display->panel->panel_lock);
+			rc = dsi_panel_tx_cmd_set(display->panel, DSI_CMD_DEFAULT_SWITCH_PAGE, false);
+			mutex_unlock(&display->panel->panel_lock);
+			mutex_unlock(&display->display_lock);
+			if (rc < 0) {
+				DSI_ERR("Read panel id end, switch default page failed!\n");
+			}
+		}
+
+	} else {
+		OPLUS_DSI_WARN("display panel status is not on\n");
 		return -EINVAL;
 	}
 
-	panel_id->DA = display->oplus_display.panel_id1;
-	panel_id->DB = display->oplus_display.panel_id2;
-	panel_id->DC = display->oplus_display.panel_id3;
-
-	return 0;
+	return ret;
 }
 
 int oplus_display_panel_get_oplus_max_brightness(void *buf)
@@ -1433,13 +1486,6 @@ int oplus_display_tx_cmd_set_lock(struct dsi_display *display, enum dsi_cmd_set_
 
 int oplus_display_panel_get_iris_loopback_status(void *buf)
 {
-#if defined(CONFIG_PXLW_IRIS)
-	uint32_t *status = buf;
-
-	if (iris_is_chip_supported())
-		*status = iris_loop_back_validate();
-#endif
-
 	return 0;
 }
 
@@ -1946,139 +1992,5 @@ int oplus_display_panel_set_dc_compensate(void *data)
 	if (dcc_flags == FILE_DESTROY) {
 		EXCEPTION_TRACKPOINT_REPORT("DisplayDriverID@@431$$DCCompensate file destroied!!");
 	}
-	return 0;
-}
-
-int oplus_display_panel_set_mipi_err_check(void *data)
-{
-	int rc = 0;
-	u32 *check_result = data;
-	struct dsi_panel *panel = NULL;
-	struct dsi_display *display = oplus_display_get_current_display();
-
-	if (!display || !display->panel) {
-		OPLUS_DSI_ERR("Invalid display or panel\n");
-		*check_result = -EINVAL;
-		return -EINVAL;
-	}
-
-	panel = display->panel;
-
-	if (display->panel->power_mode != SDE_MODE_DPMS_ON ||
-			!(panel->oplus_panel.mipi_err_config.config & OPLUS_REGS_CHECK_ENABLE)) {
-		OPLUS_DSI_ERR("power mode not SDE_MODE_DPMS_ON or mipi err check is disable!\n");
-		*check_result = -EINVAL;
-		return -EINVAL;
-	}
-
-	mutex_lock(&panel->panel_lock);
-	*check_result = oplus_panel_mipi_err_check(panel);
-	OPLUS_DSI_INFO("mipi err check result: %d\n", *check_result);
-	mutex_unlock(&panel->panel_lock);
-
-	return rc;
-}
-
-int oplus_display_panel_get_mipi_err_check(void *data)
-{
-	int rc = 0;
-	u32 *check_result = data;
-	struct dsi_panel *panel = NULL;
-	struct dsi_display *display = oplus_display_get_current_display();
-
-	if (!display || !display->panel) {
-		OPLUS_DSI_ERR("Invalid display or panel\n");
-		return -EINVAL;
-	}
-
-	panel = display->panel;
-
-	if (panel->oplus_panel.mipi_err_config.config & OPLUS_REGS_CHECK_ENABLE) {
-		OPLUS_DSI_INFO("mipi err check is enable\n");
-		*check_result = 1;
-	} else {
-		OPLUS_DSI_INFO("mipi err check is disable\n");
-		*check_result = 0;
-	}
-
-	return rc;
-}
-int oplus_display_panel_set_white_point_status(void *data)
-{
-	int rc = 0;
-	uint32_t *flag = data;
-
-	struct dsi_display *display = get_main_display();
-	struct dsi_panel *panel = NULL;
-	u32 cmd_index = 0;
-
-	if (!display || !display->panel) {
-		OPLUS_DSI_ERR("Invalid display or panel\n");
-		rc = -EINVAL;
-		return rc;
-	}
-	panel = display->panel;
-
-	if (!panel->oplus_panel.white_point_compensation_enabled) {
-		OPLUS_DSI_WARN("This project don't support white point compensation\n");
-		rc = -EFAULT;
-		return rc;
-	}
-
-	if(display->panel->power_mode != SDE_MODE_DPMS_ON) {
-		OPLUS_DSI_WARN("display panel is not on, data=[%s]\n", (char *)data);
-		rc = -EFAULT;
-		return rc;
-	}
-
-	if (*flag > 1) {
-		OPLUS_DSI_ERR("Unknow switch status: %d\n", *flag);
-		rc = -EINVAL;
-		return rc;
-	}
-
-	OPLUS_DSI_INFO("Set white point compensation state: %d, data=[%s]\n", *flag, (char *)data);
-	mutex_lock(&display->display_lock);
-	mutex_lock(&panel->panel_lock);
-
-	cmd_index = DSI_CMD_REDUCE_WHITE_POINT_OFF + *flag;
-	rc = dsi_panel_tx_cmd_set(panel, cmd_index, false);
-
-	mutex_unlock(&panel->panel_lock);
-	mutex_unlock(&display->display_lock);
-
-	return rc;
-}
-
-int oplus_display_get_ignore_mode(void *data)
-{
-	struct ignore_mode_get *ignore_get = data;
-	int display_id = ignore_get->count;
-	struct dsi_display *display = NULL;
-	struct dsi_panel *panel = NULL;
-	char payload[128] = "";
-	u32 cnt = 0;
-
-	display = get_main_display();
-	if (1 == display_id)
-		display = get_sec_display();
-	if (!display) {
-		OPLUS_DSI_ERR("display is null\n");
-		return 0;
-	}
-
-	panel = display->panel;
-	if (!panel) {
-		OPLUS_DSI_ERR("panel is null\n");
-		return 0;
-	}
-
-	ignore_get->count = panel->oplus_panel.ignore_mode_count;
-	OPLUS_DSI_INFO("ignore_get->count = %d\n", ignore_get->count);
-	for (int i = 0; i < ignore_get->count; i++) {
-		ignore_get->ignore_mode[i] = panel->oplus_panel.ignore_mode[i];
-		cnt += scnprintf(payload + cnt, sizeof(payload) - cnt, "[%u]", ignore_get->ignore_mode[i]);
-	}
-	OPLUS_DSI_INFO("ignore mode = %s\n", payload);
 	return 0;
 }

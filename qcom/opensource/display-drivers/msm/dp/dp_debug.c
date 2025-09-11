@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -962,10 +962,8 @@ static ssize_t dp_debug_mst_sideband_mode_write(struct file *file,
 
 	/* Leave room for termination char */
 	len = min_t(size_t, count, SZ_8 - 1);
-	if (copy_from_user(buf, user_buff, len)) {
-		mutex_unlock(&debug->lock);
+	if (copy_from_user(buf, user_buff, len))
 		return -EFAULT;
-	}
 
 	buf[len] = '\0';
 
@@ -2408,15 +2406,6 @@ static int dp_debug_init_configs(struct dp_debug_private *debug,
 
 }
 
-static int dp_debug_init_fifo_error(struct dp_debug_private *debug,
-		struct dentry *dir)
-{
-	int rc = 0;
-
-	debugfs_create_bool("fifo_error_enable", 0644, dir, &debug->parser->fifo_error_enable);
-	return rc;
-}
-
 static int dp_debug_init(struct dp_debug *dp_debug)
 {
 	int rc = 0;
@@ -2488,10 +2477,6 @@ static int dp_debug_init(struct dp_debug *dp_debug)
 		goto error_remove_dir;
 
 	rc = dp_debug_init_configs(debug, dir);
-	if (rc)
-		goto error_remove_dir;
-
-	rc = dp_debug_init_fifo_error(debug, dir);
 	if (rc)
 		goto error_remove_dir;
 

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 /*
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -293,11 +293,6 @@ struct sde_drm_de_v1 {
  * @cac_le_inc_skip_y:     LE vertical inc_skip control
  * @cac_re_inc_skip_x:     RE horizontal inc_skip control
  * @cac_re_inc_skip_y:     RE vertical inc_skip control
- * @fov_mode:              Fovea mode for current configuration
- * @cac_asym_phase_step_h: Horizontal phase step for fov mode after center region
- * @cac_asym_phase_step_v: Vertical phase step for fov mode after center region
- * @cac_re_phase_step_v:   Right eye vertical phase step for fov mode in beginning region
- * @cac_re_asym_phase_step_v: Right eye vertical phase step for fov mode in ending region
  */
 struct sde_drm_cac {
 	__u32 cac_mode;
@@ -325,12 +320,6 @@ struct sde_drm_cac {
 	__u16 cac_le_inc_skip_y[SDE_MAX_PLANES];
 	__u16 cac_re_inc_skip_x[SDE_MAX_PLANES];
 	__u16 cac_re_inc_skip_y[SDE_MAX_PLANES];
-
-	__u32 fov_mode;
-	__u32 cac_asym_phase_step_h;
-	__u32 cac_asym_phase_step_v;
-	__u32 cac_re_phase_step_v;
-	__u32 cac_re_asym_phase_step_v;
 };
 
 /*
@@ -1034,10 +1023,6 @@ struct sde_drm_dnsc_blur_cfg {
 #define DRM_EVENT_FRAME_DONE 0X8000011
 #define DRM_EVENT_MDNIE_ART 0X80000012
 #define DRM_EVENT_COPR 0X80000013
-#define DRM_EVENT_VM_RECLAIM 0X80000014
-#ifdef OPLUS_FEATURE_DISPLAY
-#define DRM_EVENT_TP_TOUCHDOWN 0x80000015 /* tp touch down event */
-#endif
 
 #ifndef DRM_MODE_FLAG_VID_MODE_PANEL
 #define DRM_MODE_FLAG_VID_MODE_PANEL        0x01

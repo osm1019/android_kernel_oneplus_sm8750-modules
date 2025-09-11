@@ -83,11 +83,6 @@ struct panel_reg_rw {
 	uint32_t value[PANEL_IOCTL_BUF_MAX]; /*for read, value is empty, just user get function for read the value*/
 };
 
-struct ignore_mode_get {
-	uint32_t ignore_mode[PANEL_IOCTL_BUF_MAX];
-	uint32_t count;
-};
-
 int oplus_display_panel_get_id(void *buf);
 int oplus_display_panel_get_max_brightness(void *buf);
 int oplus_display_panel_set_max_brightness(void *buf);
@@ -149,8 +144,4 @@ void oplus_disable_bl_delay_with_frame(struct dsi_panel *panel, u32 disable_fram
 int oplus_display_panel_set_hbm_max(void *data);
 int oplus_display_panel_get_hbm_max(void *data);
 int oplus_display_panel_set_dc_compensate(void *data);
-int oplus_display_panel_set_mipi_err_check(void *data);
-int oplus_display_panel_get_mipi_err_check(void *data);
-int oplus_display_panel_set_white_point_status(void *data);
-int oplus_display_get_ignore_mode(void *data);
 #endif /* _OPLUS_DISPLAY_DEVICE_IOCTL_H_ */

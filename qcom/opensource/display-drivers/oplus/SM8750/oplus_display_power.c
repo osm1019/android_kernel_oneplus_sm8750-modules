@@ -15,11 +15,6 @@
 #include "oplus_panel.h"
 #include "oplus_adfr.h"
 #include "oplus_display_pwm.h"
-#include "oplus_bl_ic_ktz8868.h"
-
-#ifdef OPLUS_FEATURE_TP_BASIC
-#include "oplus_display_notify_tp.h"
-#endif /* OPLUS_FEATURE_TP_BASIC */
 
 #define OPLUS_PINCTRL_NAMES_COUNT 2
 
@@ -32,7 +27,6 @@ int oplus_panel_parse_power_config(struct dsi_panel *panel)
 	int rc = 0, i = 0;
 	const char *name_vddi = NULL;
 	const char *name_vddr = NULL;
-	const char *name_vci = NULL;
 	u32 *panel_vol = NULL;
 	struct dsi_parser_utils *utils = &panel->utils;
 
@@ -86,31 +80,6 @@ int oplus_panel_parse_power_config(struct dsi_panel *panel)
 					panel->oplus_panel.vendor_name, name_vddr);
 			strcpy(panel_vol_bak[PANEL_VOLTAGE_ID_VDDR].pwr_name, name_vddr);
 		}
-
-		panel_vol = &panel_vol_bak[PANEL_VOLTAGE_ID_VCI].voltage_id;
-		rc = utils->read_u32_array(utils->data, "qcom,panel_voltage_vci",
-				panel_vol, PANEL_VOLTAGE_VALUE_COUNT);
-
-		if (rc) {
-			OPLUS_DSI_ERR("[%s] failed to parse panel_voltage vci\n",
-					panel->oplus_panel.vendor_name);
-			goto error;
-		}
-
-		rc = utils->read_string(utils->data, "qcom,panel_voltage_vci_name",
-				&name_vci);
-
-		if (rc) {
-			OPLUS_DSI_ERR("[%s] failed to parse vci name\n",
-					panel->oplus_panel.vendor_name);
-			goto error;
-
-		} else {
-			OPLUS_DSI_INFO("[%s] surccess to parse vci name %s\n",
-					panel->oplus_panel.vendor_name, name_vci);
-			strcpy(panel_vol_bak[PANEL_VOLTAGE_ID_VCI].pwr_name, name_vci);
-		}
-
 		/* add for debug */
 		for (i = 0; i < PANEL_VOLTAGE_ID_MAX; i++) {
 			OPLUS_DSI_INFO("panel_voltage[%d] = %d,%d,%d,%d,%s\n", i,
@@ -1115,28 +1084,6 @@ int oplus_panel_power_on(struct dsi_panel *panel)
 		goto error_disable_pinctrl;
 	}
 
-#ifdef OPLUS_FEATURE_TP_BASIC
-	if (oplus_display_notify_tp_ops.tp_panel_power_on_supply) {
-		if (oplus_display_notify_tp_ops.tp_panel_power_on_supply(panel)) {
-			if(panel->power_info.refcount == 0) {
-				rc = oplus_panel_power_supply_enable(panel);
-				if (rc) {
-					OPLUS_DSI_ERR("[%s] failed set power supply enable, rc=%d\n", panel->name, rc);
-					goto error_disable_supply;
-				}
-			}
-			panel->power_info.refcount++;
-
-			if(panel->oplus_panel.bl_ic_ktz8868_used) {
-				rc = oplus_bl_ic_ktz8868_power_on(panel);
-				if (rc) {
-					OPLUS_DSI_ERR("[%s] failed to set ktz8868 on!, rc=%d\n", panel->name, rc);
-					goto error_disable_pinctrl;
-				}
-			}
-		}
-	}
-#else /* OPLUS_FEATURE_TP_BASIC */
 	if(panel->power_info.refcount == 0) {
 		rc = oplus_panel_power_supply_enable(panel);
 		if (rc) {
@@ -1145,15 +1092,6 @@ int oplus_panel_power_on(struct dsi_panel *panel)
 		}
 	}
 	panel->power_info.refcount++;
-
-	if(panel->oplus_panel.bl_ic_ktz8868_used) {
-		rc = oplus_bl_ic_ktz8868_power_on(panel);
-		if (rc) {
-			OPLUS_DSI_ERR("[%s] failed to set ktz8868 on!, rc=%d\n", panel->name, rc);
-			goto error_disable_pinctrl;
-		}
-	}
-#endif /* OPLUS_FEATURE_TP_BASIC */
 
 	if (panel->oplus_panel.panel_reset_position == PANEL_RESET_POSITION2) {
 		return 0;
@@ -1195,24 +1133,6 @@ int oplus_panel_power_off(struct dsi_panel *panel)
 
 	OPLUS_DSI_INFO("oplus_panel_power_off");
 
-#ifdef OPLUS_FEATURE_TP_BASIC
-	if (oplus_display_notify_tp_ops.tp_panel_power_off_supply) {
-		if (oplus_display_notify_tp_ops.tp_panel_power_off_supply(panel)) {
-			if (panel->power_info.refcount == 0) {
-					OPLUS_DSI_ERR("Unbalanced regulator off:%s\n",
-							panel->power_info.vregs->vreg_name);
-			} else {
-				panel->power_info.refcount--;
-				if (panel->power_info.refcount == 0) {
-					rc = oplus_panel_power_supply_disable(panel);
-					if (rc) {
-						OPLUS_DSI_ERR("[%s] failed set power supply disable, rc=%d\n", panel->name, rc);
-					}
-				}
-			}
-		}
-	}
-#else /* OPLUS_FEATURE_TP_BASIC */
 	if (panel->power_info.refcount == 0) {
 			OPLUS_DSI_ERR("Unbalanced regulator off:%s\n",
 					panel->power_info.vregs->vreg_name);
@@ -1225,12 +1145,13 @@ int oplus_panel_power_off(struct dsi_panel *panel)
 			}
 		}
 	}
-#endif /* OPLUS_FEATURE_TP_BASIC */
 
 	rc = dsi_panel_set_pinctrl_state(panel, false);
 	if (rc) {
 		OPLUS_DSI_ERR("[%s] failed set pinctrl state, rc=%d\n", panel->name, rc);
 	}
+
+	usleep_range(70*1000, (70*1000)+100);
 
 	return rc;
 }
@@ -1256,12 +1177,6 @@ int oplus_panel_prepare(struct dsi_panel *panel)
 			OPLUS_DSI_ERR("[%s] panel reset failed, rc=%d\n",
 					panel->name, rc);
 		}
-#ifdef OPLUS_FEATURE_TP_BASIC
-		/* notify tp load fw after lcd reset */
-		if (oplus_display_notify_tp_ops.tp_panel_power_on_load_fw) {
-			oplus_display_notify_tp_ops.tp_panel_power_on_load_fw(panel);
-		}
-#endif /* OPLUS_FEATURE_TP_BASIC */
 	}
 
 	return rc;
@@ -1342,52 +1257,10 @@ int oplus_panel_charger_psy_event(struct notifier_block *nb, unsigned long event
 	return NOTIFY_DONE;
 }
 
-void oplus_panel_register_supply_notifier(void)
-{
+void oplus_panel_register_supply_notifier(void) {
 	psy_nb.notifier_call = oplus_panel_charger_psy_event;
 	power_supply_reg_notifier(&psy_nb);
 	OPLUS_DSI_INFO("successfully register supply notifier\n");
 
 	return;
 }
-
-int oplus_bl_ic_ktz8868_power_on(struct dsi_panel *panel)
-{
-	int rc = 0;
-
-	/* add for ktz8866 poweron */
-	rc = bl_ic_ktz8868_hw_en(true);
-	if (rc) {
-		DSI_ERR("[%s] failed to bl_ic_ktz8866_hw_en, rc=%d\n",
-			panel->name, rc);
-		return rc;
-	}
-
-	rc = bl_ic_ktz8868_set_lcd_bias_by_gpio(true);
-	if (rc) {
-		DSI_ERR("[%s] failed to lcd_set_bias, rc=%d\n",
-			panel->name, rc);
-		return rc;
-	}
-	usleep_range(10*1000, (10*1000)+100);
-	return rc;
-}
-
-void oplus_bl_ic_ktz8868_power_off(struct dsi_panel *panel)
-{
-	int rc = 0;
-
-	rc = bl_ic_ktz8868_set_lcd_bias_by_gpio(false);
-	if (rc) {
-		DSI_ERR("[%s] failed to lcd_set_bias, rc=%d\n",
-			panel->name, rc);
-	}
-
-	/* add for ktz8866 poweroff */
-	rc = bl_ic_ktz8868_hw_en(false);
-	if (rc) {
-		DSI_ERR("[%s] failed to bl_ic_ktz8866_hw_en, rc=%d\n",
-			panel->name, rc);
-	}
-}
-

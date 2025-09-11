@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -47,7 +47,6 @@
 #define REG_DMA_LTM_UPDATE_REQ_MASK 0xFFFFFFFE
 
 #define REG_DMA_SPR_CONFIG_MASK ~0xFDFFFFFF
-#define REG_DMA_SPR_PARTIAL_CROP_BOT_MASK 0xDFFFFFFF
 
 #define GAMUT_LUT_MEM_SIZE ((sizeof(struct drm_msm_3d_gamut)) + \
 		REG_DMA_HEADERS_BUFFER_SZ)
@@ -240,10 +239,6 @@ static u32 sspp_mapping[SSPP_MAX] = {
 	[SSPP_VIG1] = VIG1,
 	[SSPP_VIG2] = VIG2,
 	[SSPP_VIG3] = VIG3,
-	[SSPP_VIG4] = VIG4,
-	[SSPP_VIG5] = VIG5,
-	[SSPP_VIG6] = VIG6,
-	[SSPP_VIG7] = VIG7,
 	[SSPP_DMA0] = DMA0,
 	[SSPP_DMA1] = DMA1,
 	[SSPP_DMA2] = DMA2,
@@ -335,29 +330,15 @@ static int _reg_dmav1_rc_program_enable_bits(
 	if (r2_enable)
 		val |= BIT(4);
 
-	/*ROI should include complete top region when top region is enabled*/
-	if (r1_enable &&
-		(rc_roi->y || ((rc_roi->y + rc_roi->h) < rc_mask_cfg->cfg_param_01))) {
-		SDE_EVT32(0x1111, RC_IDX(hw_dspp), r1_enable, rc_roi->y, rc_roi->h,
-				rc_mask_cfg->cfg_param_01);
-		return -EINVAL;
-	}
-
-	/*ROI should include complete bottom region when bottom region is enabled*/
-	if (r2_enable &&
-		(((rc_roi->y + rc_roi->h) != mask_h) || (rc_roi->y > rc_mask_cfg->cfg_param_02))) {
-		SDE_EVT32(0x2222, RC_IDX(hw_dspp), r2_enable, rc_roi->y, rc_roi->h, mask_h,
-				rc_mask_cfg->cfg_param_02);
-		return -EINVAL;
-	}
-
-	ystart = rc_roi->y;
+	/*corner case for partial update in R2 region*/
+	if (!r1_enable && r2_enable)
+		ystart = rc_roi->y;
 
 	SDE_DEBUG("idx:%d w:%lld h:%lld flags:%llx, R1:%d, R2:%d, PU R1:%d, PU R2:%d, Y_START:%d\n",
-			RC_IDX(hw_dspp), mask_w, mask_h, flags, r1_valid, r2_valid, pu_in_r1,
-			pu_in_r2, ystart);
+		RC_IDX(hw_dspp), mask_w, mask_h, flags, r1_valid, r2_valid, pu_in_r1,
+		pu_in_r2, ystart);
 	SDE_EVT32(RC_IDX(hw_dspp), mask_w, mask_h, flags, r1_valid, r2_valid, pu_in_r1, pu_in_r2,
-			ystart);
+		ystart);
 
 	val |= param_c;
 	rc = _reg_dmav1_rc_write(hw_dspp, SDE_HW_RC_REG1, val, dma_ops, feature);
@@ -3896,7 +3877,7 @@ static int reg_dmav1_setup_cac(struct sde_hw_pipe *ctx,
 	phase_step_uv_h = scaler3_cfg->phase_step_x[1] & 0xFFFFFF;
 	phase_step_uv_v = scaler3_cfg->phase_step_y[1] & 0xFFFFFF;
 
-	if (!cac_cfg->cac_mode && !cac_cfg->fov_mode)
+	if (cac_cfg->cac_mode == 0)
 		goto skip_cac;
 
 	phase_step_y_h |= (cac_cfg->cac_le_inc_skip_x[0] << 29) |
@@ -3912,7 +3893,6 @@ static int reg_dmav1_setup_cac(struct sde_hw_pipe *ctx,
 
 	op_mode |= (cac_cfg->cac_mode << 1);
 	op_mode |= (cac_cfg->uv_filter_cfg & 0x3) << 24;
-	op_mode |= (cac_cfg->fov_mode & 0x3) << 20;
 
 	preload_re = ((cac_cfg->cac_re_preload_y[1] & 0x7F) << 24) |
 			((cac_cfg->cac_re_preload_y[0] & 0x7F) << 8);
@@ -3974,36 +3954,6 @@ static int reg_dmav1_setup_cac(struct sde_hw_pipe *ctx,
 	rc = dma_ops->setup_payload(dma_write_cfg);
 	if (rc) {
 		DRM_ERROR("setting dst size failed ret %d\n", rc);
-		return rc;
-	}
-
-	REG_DMA_SETUP_OPS(*dma_write_cfg, offset + 0x68, &cac_cfg->cac_asym_phase_step_h,
-		sizeof(cac_cfg->cac_asym_phase_step_h), REG_SINGLE_WRITE, 0, 0, 0);
-	rc = dma_ops->setup_payload(dma_write_cfg);
-	if (rc) {
-		DRM_ERROR("setting cac_asym_phase_step_h failed ret %d\n", rc);
-		return rc;
-	}
-
-	REG_DMA_SETUP_OPS(*dma_write_cfg, offset + 0x6C, &cac_cfg->cac_asym_phase_step_v,
-		 sizeof(cac_cfg->cac_asym_phase_step_v),  REG_SINGLE_WRITE, 0, 0, 0);
-	rc = dma_ops->setup_payload(dma_write_cfg);
-	if (rc) {
-		DRM_ERROR("setting cac_asym_phase_step_v failed ret %d\n", rc);
-		return rc;
-	}
-
-	REG_DMA_SETUP_OPS(*dma_write_cfg, offset + 0x88, &cac_cfg->cac_re_phase_step_v,
-		sizeof(cac_cfg->cac_re_phase_step_v), REG_SINGLE_WRITE, 0, 0, 0);
-	if (rc) {
-		DRM_ERROR("setting cac_re_phase_step_v failed ret %d\n", rc);
-		return rc;
-	}
-
-	REG_DMA_SETUP_OPS(*dma_write_cfg, offset + 0x8C, &cac_cfg->cac_re_asym_phase_step_v,
-		sizeof(cac_cfg->cac_re_asym_phase_step_v), REG_SINGLE_WRITE, 0, 0, 0);
-	if (rc) {
-		DRM_ERROR("setting cac_re_asym_phase_step_v failed ret %d\n", rc);
 		return rc;
 	}
 
@@ -6418,41 +6368,6 @@ cleanup:
 	kvfree(reg);
 }
 
-int reg_dmav1_setup_spr_pu_config(struct sde_hw_dspp *ctx,
-	struct msm_roi_list *roi_list,
-	struct sde_hw_reg_dma_ops *dma_ops, struct sde_reg_dma_buffer *buffer)
-{
-	struct sde_reg_dma_setup_ops_cfg dma_write_cfg;
-	uint32_t reg_off, base_off;
-	uint32_t reg = 0;
-	int rc = 0;
-
-	base_off = ctx->hw.blk_off + ctx->cap->sblk->spr.base;
-
-	REG_DMA_INIT_OPS(dma_write_cfg, MDSS, SPR_PU_CFG, buffer);
-	REG_DMA_SETUP_OPS(dma_write_cfg, 0, NULL, 0, HW_BLK_SELECT, 0, 0, 0);
-	rc = dma_ops->setup_payload(&dma_write_cfg);
-	if (rc) {
-		DRM_ERROR("spr pu write decode select failed ret %d\n", rc);
-		return rc;
-	}
-
-	if (roi_list && roi_list->spr_roi[0].y2 != roi_list->roi[0].y2)
-		reg = BIT(29);
-
-	reg_off = base_off + 0x04;
-	REG_DMA_SETUP_OPS(dma_write_cfg, reg_off, &reg,
-		sizeof(uint32_t), REG_SINGLE_MODIFY, 0, 0, REG_DMA_SPR_PARTIAL_CROP_BOT_MASK);
-
-	rc = dma_ops->setup_payload(&dma_write_cfg);
-	if (rc) {
-		DRM_ERROR("write pu config failed ret %d\n", rc);
-		return rc;
-	}
-
-	return rc;
-}
-
 int reg_dmav1_setup_spr_pu_common(struct sde_hw_dspp *ctx, struct sde_hw_cp_cfg *hw_cfg,
 		struct msm_roi_list *roi_list,
 		struct sde_hw_reg_dma_ops *dma_ops, struct sde_reg_dma_buffer *buffer)
@@ -6569,11 +6484,8 @@ void reg_dmav1_setup_spr_pu_cfgv2(struct sde_hw_dspp *ctx, void *cfg)
 	if (hw_cfg->payload && hw_cfg->len == sizeof(struct sde_drm_roi_v1))
 		roi_list = hw_cfg->payload;
 
-	rc = reg_dmav1_setup_spr_pu_common(ctx, cfg, roi_list, dma_ops, buffer);
-	if (rc)
-		return;
 
-	rc = reg_dmav1_setup_spr_pu_config(ctx, roi_list, dma_ops, buffer);
+	rc = reg_dmav1_setup_spr_pu_common(ctx, cfg, roi_list, dma_ops, buffer);
 	if (rc)
 		return;
 
@@ -7086,8 +6998,7 @@ static bool __reg_dmav1_valid_hfc_en_cfg(struct drm_msm_dem_cfg *dcfg,
 	w = 2 * (w / 32);
 	w = w / (hw_cfg->num_of_mixers ? hw_cfg->num_of_mixers : 1);
 
-	if (h != (hw_cfg->skip_planes[SB_PLANE_REAL].plane_h + hw_cfg->overfetch_lines_on_top +
-			hw_cfg->overfetch_lines_on_bottom) ||
+	if (h != (hw_cfg->skip_planes[SB_PLANE_REAL].plane_h + hw_cfg->overfetch_lines_on_top) ||
 			w != hw_cfg->skip_planes[SB_PLANE_REAL].plane_w) {
 		DRM_ERROR("invalid hfc cfg exp h %d exp w %d act h %d act w %d\n",
 			h, w, hw_cfg->skip_planes[SB_PLANE_REAL].plane_h,

@@ -38,7 +38,7 @@ int oplus_panel_cmdq_sync_count_decrease(void *sde_connector);
 /**
  * oplus_panel_send_asynchronous_cmd() - send commands asynchronously
  */
-int oplus_panel_send_asynchronous_cmd(struct dsi_display *display);
+int oplus_panel_send_asynchronous_cmd(void);
 
 /**
  * oplus_panel_cmd_print() - oplus panel command printf

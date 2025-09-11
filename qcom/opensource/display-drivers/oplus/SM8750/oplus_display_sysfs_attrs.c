@@ -42,10 +42,6 @@
 #include "oplus_onscreenfingerprint.h"
 #endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
 
-#if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
-#include "dsi_iris_api.h"
-#endif
-
 /* String length define */
 #define STR_SIZE 512
 
@@ -200,8 +196,7 @@ int dsi_panel_read_panel_reg(struct dsi_display_ctrl *ctrl,
 	cmdsreq.msg.rx_len = len;
 	cmdsreq.msg.flags |= MIPI_DSI_MSG_UNICAST_COMMAND;
 
-	if ((!strcmp(panel->name, "AA570 P 1 A0017 vid mode panel") ||
-		!strcmp(panel->name, "AC274 P 3 A0026 dsc video mode panel")) &&
+	if (!strcmp(panel->name, "AA570 P 1 A0017 vid mode panel") &&
 			panel->panel_mode == DSI_OP_VIDEO_MODE) {
 		cmdsreq.msg.flags |= MIPI_DSI_MSG_USE_LPM;
 	}
@@ -209,17 +204,6 @@ int dsi_panel_read_panel_reg(struct dsi_display_ctrl *ctrl,
 	cmdsreq.ctrl_flags = DSI_CTRL_CMD_READ;
 
 	dsi_display_set_cmd_tx_ctrl_flags(display, &cmdsreq);
-#if defined(CONFIG_PXLW_IRIS)
-	if (iris_is_chip_supported() && iris_is_pt_mode(panel->is_secondary)) {
-		struct iris_cmd_set cmdset;
-
-		memset(&cmdset, 0x00, sizeof(cmdset));
-		cmdset.count = 1;
-		cmdset.cmds = (struct iris_cmd_desc *)(&cmdsreq);
-		rc = iris_pt_send_panel_cmd(&cmdset);
-	} else {
-#endif  /* CONFIG_PXLW_IRIS */
-
 	rc = dsi_ctrl_transfer_prepare(ctrl->ctrl, cmdsreq.ctrl_flags);
 	if (rc) {
 		OPLUS_DSI_ERR("prepare for rx cmd transfer failed rc=%d\n", rc);
@@ -232,10 +216,6 @@ int dsi_panel_read_panel_reg(struct dsi_display_ctrl *ctrl,
 	}
 
 	dsi_ctrl_transfer_unprepare(ctrl->ctrl, cmdsreq.ctrl_flags);
-
-#if defined(CONFIG_PXLW_IRIS)
-	}
-#endif  /* CONFIG_PXLW_IRIS */
 
 error:
 	/* release panel_lock */
@@ -271,26 +251,9 @@ int dsi_panel_read_panel_reg_unlock(struct dsi_display_ctrl *ctrl,
 	cmdsreq.msg.rx_len = len;
 	cmdsreq.msg.flags |= MIPI_DSI_MSG_UNICAST_COMMAND;
 
-/* #ifdef OPLUS_FEATURE_DISPLAY */
-	if (panel->panel_mode == DSI_OP_VIDEO_MODE) {
-		cmdsreq.msg.flags |= MIPI_DSI_MSG_USE_LPM;
-	}
-/* #endif */
-
 	cmdsreq.ctrl_flags = DSI_CTRL_CMD_READ;
 
 	dsi_display_set_cmd_tx_ctrl_flags(display, &cmdsreq);
-#if defined(CONFIG_PXLW_IRIS)
-	if (iris_is_chip_supported() && iris_is_pt_mode(panel->is_secondary)) {
-		struct iris_cmd_set cmdset;
-
-		memset(&cmdset, 0x00, sizeof(cmdset));
-		cmdset.count = 1;
-		cmdset.cmds = (struct iris_cmd_desc *)(&cmdsreq);
-		rc = iris_pt_send_panel_cmd(&cmdset);
-	} else {
-#endif  /* CONFIG_PXLW_IRIS */
-
 	rc = dsi_ctrl_transfer_prepare(ctrl->ctrl, cmdsreq.ctrl_flags);
 	if (rc) {
 		DSI_ERR("prepare for rx cmd transfer failed rc=%d\n", rc);
@@ -306,10 +269,6 @@ int dsi_panel_read_panel_reg_unlock(struct dsi_display_ctrl *ctrl,
 	}
 
 	dsi_ctrl_transfer_unprepare(ctrl->ctrl, cmdsreq.ctrl_flags);
-
-#if defined(CONFIG_PXLW_IRIS)
-	}
-#endif  /* CONFIG_PXLW_IRIS */
 
 error:
 	return rc;
@@ -897,36 +856,141 @@ static ssize_t oplus_display_get_panel_apl_value(struct kobject *obj,
 	return cnt;
 }
 
-static ssize_t oplus_display_get_panel_id(struct kobject *obj,
-		struct kobj_attribute *attr, char *buf)
+int oplus_display_panel_get_id_unlock(void *buf)
 {
-	int ret = 0;
 	struct dsi_display *display = get_main_display();
-	struct panel_id panel_id = {0};
+	int ret = 0;
+	unsigned char read[30];
+	struct dsi_display_ctrl *m_ctrl = NULL;
+	struct panel_id *panel_rid = buf;
+	int panel_id = panel_rid->DA;
 
-	if (!display) {
+	if (panel_id == 1)
+		display = get_sec_display();
+
+	if (!display || !display->panel) {
 		OPLUS_DSI_ERR("display is null\n");
+		ret = -1;
+		return ret;
+	}
+	/* if (__oplus_get_power_status() == OPLUS_DISPLAY_POWER_ON) { */
+	if (display->panel->power_mode == SDE_MODE_DPMS_ON) {
+		if (!strcmp(display->panel->oplus_panel.vendor_name, "A0005")) {
+			ret = dsi_panel_tx_cmd_set(display->panel, DSI_CMD_PANEL_INFO_SWITCH_PAGE, false);
+			if (ret < 0) {
+				DSI_ERR("Read AA545/AC090 P 3 A0005 panel id switch page failed!\n");
+			}
+		}
+
+		m_ctrl = &display->ctrl[display->cmd_master_idx];
+
+		ret = dsi_panel_read_panel_reg_unlock(m_ctrl, display->panel, 0xDA, read, 1);
+		if (ret < 0) {
+			OPLUS_DSI_ERR("failed to read DA ret=%d\n", ret);
+			return -EINVAL;
+		}
+
+		panel_rid->DA = (uint32_t)read[0];
+
+		ret = dsi_panel_read_panel_reg_unlock(m_ctrl, display->panel, 0xDB, read, 1);
+		if (ret < 0) {
+			OPLUS_DSI_ERR("failed to read DB ret=%d\n", ret);
+			return -EINVAL;
+		}
+
+		panel_rid->DB = (uint32_t)read[0];
+
+		ret = dsi_panel_read_panel_reg_unlock(m_ctrl, display->panel, 0xDC, read, 1);
+		if (ret < 0) {
+			OPLUS_DSI_ERR("failed to read DC ret=%d\n", ret);
+			return -EINVAL;
+		}
+
+		panel_rid->DC = (uint32_t)read[0];
+	} else {
+		OPLUS_DSI_WARN("display panel status is not on\n");
 		return -EINVAL;
 	}
 
-	if(display->enabled == false) {
-		OPLUS_DSI_INFO("primary display is disable, try sec display\n");
-		display = get_sec_display();
-		if (!display) {
-			OPLUS_DSI_INFO("second display is null\n");
-			return -EINVAL;
-		}
-		if (display->enabled == false) {
-			OPLUS_DSI_INFO("second panel is disabled\n");
-			return -EINVAL;
-		}
+	return ret;
+}
+
+
+static ssize_t oplus_display_get_panel_id(struct kobject *obj,
+		struct kobj_attribute *attr, char *buf)
+{
+	struct dsi_display *display = get_main_display();
+	int ret = 0;
+	int rc = 0;
+	unsigned char read[30];
+	char da = 0;
+	char db = 0;
+	char dc = 0;
+
+	if (!display || !display->panel) {
+		OPLUS_DSI_ERR("display is null\n");
+		ret = -1;
+		return ret;
 	}
 
-	ret = oplus_display_read_panel_id(display, &panel_id);
-	if (ret < 0) {
-		OPLUS_DSI_ERR("Get panel id failed\n");
+	/* if (__oplus_get_power_status() == OPLUS_DISPLAY_POWER_ON) { */
+	if (display->panel->power_mode == SDE_MODE_DPMS_ON) {
+		if (display == NULL) {
+			OPLUS_DSI_ERR("display is null\n");
+			ret = -1;
+			return ret;
+		}
+		if (display->panel->oplus_panel.panel_id_switch_page) {
+			mutex_lock(&display->display_lock);
+			mutex_lock(&display->panel->panel_lock);
+			rc = dsi_panel_tx_cmd_set(display->panel, DSI_CMD_PANEL_INFO_SWITCH_PAGE, false);
+			mutex_unlock(&display->panel->panel_lock);
+			mutex_unlock(&display->display_lock);
+			if (rc < 0) {
+				DSI_ERR("Read panel id switch page failed!\n");
+				return -EFAULT;
+			}
+		}
+		mutex_lock(&display->display_lock);
+		ret = dsi_display_read_panel_reg(display, 0xda, read, 1);
+		mutex_unlock(&display->display_lock);
+		if (ret < 0) {
+			OPLUS_DSI_ERR("failed to read da ret=%d\n", ret);
+			return -EINVAL;
+		}
+		da = read[0];
+		mutex_lock(&display->display_lock);
+		ret = dsi_display_read_panel_reg(display, 0xdb, read, 1);
+		mutex_unlock(&display->display_lock);
+		if (ret < 0) {
+			OPLUS_DSI_ERR("failed to read da ret=%d\n", ret);
+			return -EINVAL;
+		}
+		db = read[0];
+		mutex_lock(&display->display_lock);
+		ret = dsi_display_read_panel_reg(display, 0xdc, read, 1);
+		mutex_unlock(&display->display_lock);
+		if (ret < 0) {
+			OPLUS_DSI_ERR("failed to read da ret=%d\n", ret);
+			return -EINVAL;
+		}
+		dc = read[0];
+		ret = sysfs_emit(buf, "%02x %02x %02x\n", da, db, dc);
+
+		if (display->panel->oplus_panel.panel_id_switch_page) {
+			mutex_lock(&display->display_lock);
+			mutex_lock(&display->panel->panel_lock);
+			rc = dsi_panel_tx_cmd_set(display->panel, DSI_CMD_DEFAULT_SWITCH_PAGE, false);
+			mutex_unlock(&display->panel->panel_lock);
+			mutex_unlock(&display->display_lock);
+			if (rc < 0) {
+				DSI_ERR("Read panel id end, switch default page failed!\n");
+				return -EFAULT;
+			}
+		}
+
 	} else {
-		ret = sysfs_emit(buf, "%02x %02x %02x\n", panel_id.DA, panel_id.DB, panel_id.DC);
+		OPLUS_DSI_ERR("display panel status is not on\n");
 	}
 
 	return ret;

@@ -297,7 +297,6 @@ struct sde_kms {
 	struct sde_hw_vbif *hw_vbif[VBIF_MAX];
 	struct sde_hw_mdp *hw_mdp;
 	struct sde_hw_uidle *hw_uidle;
-	struct sde_hw_ctl *hw_ctl_0;
 	struct sde_hw_sid *hw_sid;
 	struct sde_hw_sw_fuse *hw_sw_fuse;
 	int dsi_display_count;
@@ -307,8 +306,6 @@ struct sde_kms {
 	int dp_display_count;
 	void **dp_displays;
 	int dp_stream_count;
-	void **lb_displays;
-	int lb_disp_count;
 	bool dsc_switch_support;
 
 	bool has_danger_ctrl;

@@ -23,9 +23,6 @@
 #ifdef OPLUS_FEATURE_DISPLAY_ADFR
 #include "oplus_adfr.h"
 #endif /* OPLUS_FEATURE_DISPLAY_ADFR */
-#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
-#include "oplus_onscreenfingerprint.h"
-#endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
 
 #define to_dsi_bridge(x)     container_of((x), struct dsi_bridge, base)
 #define to_dsi_state(x)      container_of((x), struct dsi_connector_state, base)
@@ -224,11 +221,6 @@ static void dsi_bridge_pre_enable(struct drm_bridge *bridge)
 		       c_bridge->id, rc);
 		return;
 	}
-#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
-	if (oplus_ofp_is_supported() && oplus_ofp_video_mode_30hz_aod_is_enabled()) {
-		oplus_ofp_video_mode_refresh_flag_update(&(c_bridge->dsi_mode));
-	}
-#endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
 
 	if (c_bridge->dsi_mode.dsi_mode_flags &
 		(DSI_MODE_FLAG_SEAMLESS | DSI_MODE_FLAG_VRR |
@@ -1334,26 +1326,6 @@ int dsi_conn_pre_kickoff(struct drm_connector *connector,
 	}
 
 	return dsi_display_pre_kickoff(connector, display, params);
-}
-
-bool dsi_conn_check_cmd_defined(void *display, enum dsi_cmd_set_type type)
-{
-	struct dsi_display *dsi_display = display;
-	struct dsi_panel *panel;
-	u32 count;
-	struct dsi_display_mode *mode;
-
-	if (!dsi_display || !dsi_display->panel)
-		return false;
-
-	panel = dsi_display->panel;
-	if (!panel || !panel->cur_mode)
-		return false;
-
-	mode = panel->cur_mode;
-	count = mode->priv_info->cmd_sets[type].count;
-
-	return count ? true : false;
 }
 
 int dsi_conn_prepare_commit(void *display,

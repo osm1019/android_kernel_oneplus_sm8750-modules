@@ -246,14 +246,6 @@ struct sde_hw_mdp_ops {
 	 *		INTF_1/INTF_5 are only possible values.
 	 */
 	void (*dpu_sync_intf_mux)(struct sde_hw_mdp *mdp, int intf_idx);
-
-	/**
-	 * flush_sync_intf_mux - selects the intf that decides the snapshot signal
-	 * @mdp:        mdp top context driver
-	 * @intf_idx:   intf(INTF_1/INTF_5) which decides the snapshot signal for
-	 *		flush sync logic
-	 */
-	void (*flush_sync_intf_mux)(struct sde_hw_mdp *mdp, int intf_idx);
 };
 
 struct sde_hw_mdp {
@@ -294,8 +286,6 @@ struct sde_hw_sid {
 struct sde_hw_sw_fuse {
 	/* sw fuse base */
 	struct sde_hw_blk_reg_map hw;
-	/* demura sw fuse offset */
-	u32 demura_sw_fuse_offset;
 };
 
 /**

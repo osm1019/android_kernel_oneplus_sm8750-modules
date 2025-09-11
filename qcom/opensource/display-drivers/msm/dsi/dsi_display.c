@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -10,7 +10,6 @@
 #include <linux/err.h>
 #include <linux/version.h>
 #include <linux/ktime.h>
-#include <linux/pinctrl/qcom-pinctrl.h>
 
 #include "msm_drv.h"
 #include "sde_connector.h"
@@ -57,8 +56,6 @@
 #define MISR_BUFF_SIZE	256
 #define ESD_MODE_STRING_MAX_LEN 256
 #define ESD_TRIGGER_STRING_MAX_LEN 10
-#define TLMM_GPIO_CFG_LEN 0x4
-#define TLMM_GPIO_CFG_OFFSET 0x0
 
 #define MAX_NAME_SIZE	64
 #define MAX_TE_RECHECKS 5
@@ -103,11 +100,7 @@ static bool is_sim_panel(struct dsi_display *display)
 			display->panel->panel_ack_disabled);
 }
 
-#ifdef OPLUS_FEATURE_DISPLAY
-bool phy_pll_bypass(struct dsi_display *display)
-#else /* OPLUS_FEATURE_DISPLAY */
 static bool phy_pll_bypass(struct dsi_display *display)
-#endif /* OPLUS_FEATURE_DISPLAY */
 {
 	return display->ctrl[display->cmd_master_idx].phy->hw.phy_pll_bypass;
 }
@@ -328,13 +321,6 @@ error:
 #ifdef OPLUS_FEATURE_DISPLAY_ADFR
 	oplus_adfr_sa_mode_restore(dsi_display);
 #endif /* OPLUS_FEATURE_DISPLAY_ADFR */
-
-#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
-	if (oplus_ofp_is_supported()) {
-		oplus_ofp_lhbm_handle(dsi_display);
-	}
-#endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
-
 #ifdef OPLUS_FEATURE_DISPLAY
 	if (!rc) {
 		if (oplus_display_ops.panel_set_backlight_post) {
@@ -525,8 +511,7 @@ static void dsi_display_register_te_irq(struct dsi_display *display)
 	int rc = 0;
 	struct platform_device *pdev;
 	struct device *dev;
-	unsigned int te_irq, tlmm_gpio_cfg;
-	struct resource te_res;
+	unsigned int te_irq;
 
 	pdev = display->pdev;
 	if (!pdev) {
@@ -556,28 +541,9 @@ static void dsi_display_register_te_irq(struct dsi_display *display)
 	/* Avoid deferred spurious irqs with disable_irq() */
 	irq_set_status_flags(te_irq, IRQ_DISABLE_UNLAZY);
 
-	rc = msm_gpio_get_pin_address(display->disp_te_gpio, &te_res);
-	if (!rc)
-		DSI_ERR("Failed to get GPIO pin address\n");
-
-	/*
-	 * The FUNC_SEL value of the TLMM_GPIO_CFG register resets
-	 * to 0 after TE IRQ registration, disrupting GPIO functionality.
-	 * This causes the rd_ptr_irq to stop during the TE check after the
-	 * first TE IRQ registration. Read the TE GPIO configuration before
-	 * IRQ registration to restore it after registration.
-	 */
-	tlmm_gpio_cfg = DSI_GEN_R32(devm_ioremap(&display->pdev->dev, te_res.start,
-				TLMM_GPIO_CFG_LEN), TLMM_GPIO_CFG_OFFSET);
-
 	rc = devm_request_irq(dev, te_irq, dsi_display_panel_te_irq_handler,
 			      IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
 			      "TE_GPIO", display);
-
-	/* Restore TE gpio configuration after IRQ registration */
-	DSI_GEN_W32(devm_ioremap(&display->pdev->dev, te_res.start,
-				TLMM_GPIO_CFG_LEN), TLMM_GPIO_CFG_OFFSET, tlmm_gpio_cfg);
-
 	if (rc) {
 		DSI_ERR("TE request_irq failed for ESD rc:%d\n", rc);
 		irq_clear_status_flags(te_irq, IRQ_DISABLE_UNLAZY);
@@ -788,14 +754,12 @@ static void dsi_display_set_cmd_tx_ctrl_flags(struct dsi_display *display,
 #endif /* OPLUS_FEATURE_DISPLAY */
 {
 	struct dsi_display_ctrl *ctrl, *m_ctrl;
-	struct dsi_mode_info *mode_info;
 	struct mipi_dsi_msg *msg = &cmd->msg;
 	u32 cmd_dma_fifo_size;
 	u32 flags = 0;
 	int i = 0;
 
 	m_ctrl = &display->ctrl[display->clk_master_idx];
-	mode_info = &display->config.video_timing;
 
 	if (!m_ctrl->ctrl)
 		return;
@@ -826,14 +790,9 @@ static void dsi_display_set_cmd_tx_ctrl_flags(struct dsi_display *display,
 		if (ctrl->ctrl->secure_mode) {
 			flags &= ~DSI_CTRL_CMD_FETCH_MEMORY;
 			flags |= DSI_CTRL_CMD_FIFO_STORE;
-		} else if (msg->tx_len + DSI_LONG_PACKET_HEADER_LENGTH > cmd_dma_fifo_size) {
+		} else if (msg->tx_len > cmd_dma_fifo_size) {
 			flags |= DSI_CTRL_CMD_NON_EMBEDDED_MODE;
 		}
-
-		if (display->config.esync_enabled && !(flags & DSI_CTRL_CMD_NON_EMBEDDED_MODE))
-			flags |= DSI_CTRL_CMD_MULTI_DMA_BURST;
-		else
-			flags &= ~DSI_CTRL_CMD_MULTI_DMA_BURST;
 
 		/* Set flags needed for broadcast. Read commands are always unicast */
 		if (!(msg->flags & MIPI_DSI_MSG_UNICAST_COMMAND) && (display->ctrl_count > 1))
@@ -849,12 +808,6 @@ static void dsi_display_set_cmd_tx_ctrl_flags(struct dsi_display *display,
 		 */
 		if (display->panel->panel_mode == DSI_OP_VIDEO_MODE) {
 			flags |= DSI_CTRL_CMD_CUSTOM_DMA_SCHED;
-#ifdef OPLUS_FEATURE_DISPLAY
-			//MIPI_DCS_SET_DISPLAY_BRIGHTNES
-			if (((unsigned char*)(msg->tx_buf))[0] == 0x51) {
-				flags |= DSI_CTRL_CMD_ASYNC_WAIT;
-			}
-#endif /* OPLUS_FEATURE_DISPLAY */
 		} else {
 			if (msg->flags & MIPI_DSI_MSG_CMD_DMA_SCHED)
 				flags |= DSI_CTRL_CMD_CUSTOM_DMA_SCHED;
@@ -4642,8 +4595,7 @@ static bool dsi_display_is_seamless_dfps_possible(
 		DSI_DEBUG("timing.h_back_porch differs %d %d\n",
 				cur->timing.h_back_porch,
 				tgt->timing.h_back_porch);
-		if (dfps_type != DSI_DFPS_IMMEDIATE_HV_P)
-			return false;
+		return false;
 	}
 
 	if (cur->timing.h_sync_width != tgt->timing.h_sync_width) {
@@ -4657,7 +4609,7 @@ static bool dsi_display_is_seamless_dfps_possible(
 		DSI_DEBUG("timing.h_front_porch differs %d %d\n",
 				cur->timing.h_front_porch,
 				tgt->timing.h_front_porch);
-		if ((dfps_type != DSI_DFPS_IMMEDIATE_HFP) && (dfps_type != DSI_DFPS_IMMEDIATE_HV_P))
+		if (dfps_type != DSI_DFPS_IMMEDIATE_HFP)
 			return false;
 	}
 
@@ -4695,7 +4647,7 @@ static bool dsi_display_is_seamless_dfps_possible(
 		DSI_DEBUG("timing.v_front_porch differs %d %d\n",
 				cur->timing.v_front_porch,
 				tgt->timing.v_front_porch);
-		if ((dfps_type != DSI_DFPS_IMMEDIATE_VFP) && (dfps_type != DSI_DFPS_IMMEDIATE_HV_P))
+		if (dfps_type != DSI_DFPS_IMMEDIATE_VFP)
 			return false;
 	}
 
@@ -4819,16 +4771,6 @@ static int dsi_display_update_dsi_bitrate(struct dsi_display *display,
 			goto error;
 		}
 
-		if (display->config.esync_enabled) {
-			ctrl->esync_clk_freq = pclk_rate;
-			rc = dsi_clk_set_esync_frequency(display->dsi_clk_handle,
-					ctrl->esync_clk_freq, ctrl->cell_index);
-			if (rc) {
-				DSI_ERR("Failed to update esync frequency\n");
-				goto error;
-			}
-		}
-
 		ctrl->host_config.bit_clk_rate_hz = bit_clk_rate;
 error:
 		mutex_unlock(&ctrl->ctrl_lock);
@@ -4902,68 +4844,6 @@ static void _dsi_display_calc_pipe_delay(struct dsi_display *display,
 	delay->pll_delay = ((delay->pll_delay * esc_clk_rate_hz) / 1000000);
 }
 
-static void _dsi_display_calc_pipe_delay_prog_dr(struct dsi_display *display,
-				    struct dsi_dyn_clk_delay *delay,
-				    struct dsi_display_mode *mode, bool cts)
-{
-	/*
-	 * Units:
-	 * _esc              esc clock cycles
-	 * _pix              pixel clock cycles
-	 * _[unit]_comp      [unit] component of the value, does not represent the whole value
-	 */
-
-	struct dsi_ctrl *dsi_ctrl = display->ctrl[display->clk_master_idx].ctrl;
-	const u64 pix_clk_rate = dsi_ctrl->clk_freq.pix_clk_rate;
-	const u64 esc_clk_rate = dsi_ctrl->clk_freq.esc_clk_rate;
-
-	#define TO_ESC_CLK(val) ((val) * esc_clk_rate / pix_clk_rate)
-
-	bool split = false;
-
-	const u32 line_time_pix = dsi_h_total_dce(&mode->timing);
-	const u32 line_time_esc = TO_ESC_CLK(line_time_pix);
-
-	const u32 pipe_delay_esc = line_time_esc;
-	const u32 pipe_delay2_esc = cts ? 20 : 0;
-	const u32 pipe_delay3_esc = cts ? 20 : 0;
-	const u32 pll_reg_flush_delay_esc = 50;
-	const u32 pll_reg_post_flush_delay_esc = 20;
-	const u32 min_pll_lock_time_esc = 480;
-
-	const u32 delay_start_dr_esc_comp = 3;
-	const u32 delay_start_dr_pix_comp = 1;
-	const u32 mdp_stop_deassertion_esc_comp = 1;
-	const u32 mdp_stop_deassertion_pix_comp = 3;
-	const u32 mask_clkln_fsm_delay_esc = cts ? 0 : 1;
-	const u32 delay_end_dr_pix = split ? 18 + 5 : 12 + 5;
-
-	const u32 min_dr_duration_pix_comp = delay_start_dr_pix_comp + delay_end_dr_pix +
-		mdp_stop_deassertion_pix_comp;
-	const u32 min_dr_duration_esc_comp = delay_start_dr_esc_comp + pll_reg_flush_delay_esc +
-		pll_reg_post_flush_delay_esc + min_pll_lock_time_esc +
-		mdp_stop_deassertion_esc_comp + mask_clkln_fsm_delay_esc +
-		pipe_delay_esc + pipe_delay2_esc + pipe_delay3_esc;
-	const u32 min_dr_duration_esc = min_dr_duration_esc_comp +
-		TO_ESC_CLK(min_dr_duration_pix_comp);
-
-	/*
-	 * HPG does it more mathematically sensibly, but fundamentally it just rounds
-	 * min_dr_duration to the nearest integer multiple of line_time
-	 */
-	const u32 pll_delay_esc = min_dr_duration_esc +
-		(line_time_esc - (min_dr_duration_esc % line_time_esc));
-
-	delay->pipe_delay = pipe_delay_esc - 1;
-	delay->pipe_delay2 = cts ? pipe_delay2_esc - 1 : 0;
-	delay->pipe_delay3 = cts ? pipe_delay3_esc - 1 : 0;
-	delay->pll_reg_flush_delay = pll_reg_flush_delay_esc - 1;
-	delay->pll_reg_post_flush_delay = pll_reg_post_flush_delay_esc - 1;
-	delay->pll_delay = pll_delay_esc - 1;
-
-	#undef TO_ESC_CLK
-}
-
 static int _dsi_display_dyn_update_clks(struct dsi_display *display,
 					struct link_clk_freq *bkp_freq)
 {
@@ -5006,11 +4886,9 @@ static int _dsi_display_dyn_update_clks(struct dsi_display *display,
 		ctrl = &display->ctrl[i];
 		if (ctrl == m_ctrl)
 			continue;
-		dsi_phy_dynamic_refresh_trigger(ctrl->phy, false,
-				display->panel->esync_caps.esync_support);
+		dsi_phy_dynamic_refresh_trigger(ctrl->phy, false);
 	}
-	dsi_phy_dynamic_refresh_trigger(m_ctrl->phy, true,
-			display->panel->esync_caps.esync_support);
+	dsi_phy_dynamic_refresh_trigger(m_ctrl->phy, true);
 
 	/*
 	 * Don't wait for dynamic refresh done for dsi ctrl greater than 2.5
@@ -5106,10 +4984,7 @@ static int dsi_display_dynamic_clk_switch_vid(struct dsi_display *display,
 	}
 
 	/* calculate pipe delays */
-	if (display->panel->esync_caps.esync_support)
-		_dsi_display_calc_pipe_delay_prog_dr(display, &delay, mode, false);
-	else
-		_dsi_display_calc_pipe_delay(display, &delay, mode);
+	_dsi_display_calc_pipe_delay(display, &delay, mode);
 
 	/* configure dynamic refresh ctrl registers */
 	display_for_each_ctrl(i, display) {
@@ -5310,7 +5185,7 @@ static int dsi_display_dfps_calc_front_porch(
  */
 static int dsi_display_get_dfps_timing(struct dsi_display *display,
 			struct dsi_display_mode *adj_mode,
-				u32 curr_refresh_rate, int i)
+				u32 curr_refresh_rate)
 {
 	struct dsi_dfps_capabilities dfps_caps;
 	struct dsi_display_mode per_ctrl_mode;
@@ -5379,39 +5254,11 @@ static int dsi_display_get_dfps_timing(struct dsi_display *display,
 		if (!rc)
 			adj_mode->timing.h_front_porch *= display->ctrl_count;
 		break;
-	case DSI_DFPS_IMMEDIATE_HV_P:
-		if (i < 0)
-			break;
 
-		if (!dfps_caps.dfps_hfp_list) {
-			DSI_ERR("dfps_caps.dfps_hfp_list is null ptr!");
-			break;
-		}
-
-		adj_mode->timing.h_front_porch = dfps_caps.dfps_hfp_list[i] *= display->ctrl_count;
-		adj_mode->timing.h_back_porch = dfps_caps.dfps_hbp_list[i] *= display->ctrl_count;
-		adj_mode->timing.h_sync_width = dfps_caps.dfps_hpw_list[i] *= display->ctrl_count;
-		adj_mode->timing.v_back_porch = dfps_caps.dfps_vbp_list[i];
-		adj_mode->timing.v_front_porch = dfps_caps.dfps_vfp_list[i];
-		adj_mode->timing.v_sync_width = dfps_caps.dfps_vpw_list[i];
-
-		SDE_EVT32(SDE_EVTLOG_FUNC_CASE3, DSI_DFPS_IMMEDIATE_HV_P,
-			curr_refresh_rate, timing->refresh_rate);
-		SDE_EVT32(adj_mode->timing.h_front_porch, adj_mode->timing.h_back_porch,
-				adj_mode->timing.h_sync_width, adj_mode->timing.v_back_porch,
-				adj_mode->timing.v_front_porch, adj_mode->timing.v_sync_width);
-		break;
 	default:
 		DSI_ERR("Unsupported DFPS mode %d\n", dfps_caps.type);
 		rc = -ENOTSUPP;
 	}
-
-	DSI_INFO("dfps_type=%d, cur_fps=%d, adj_fps=%d, h_active=%d, v_active=%d, hfp:%d, fbp:%d, hpw:%d, vbp:%d, vfp:%d, vpw:%d",
-		dfps_caps.type, curr_refresh_rate, timing->refresh_rate,
-		adj_mode->timing.h_active, adj_mode->timing.v_active,
-		adj_mode->timing.h_front_porch, adj_mode->timing.h_back_porch,
-		adj_mode->timing.h_sync_width, adj_mode->timing.v_back_porch,
-		adj_mode->timing.v_front_porch, adj_mode->timing.v_sync_width);
 
 	return rc;
 }
@@ -5427,7 +5274,7 @@ static bool dsi_display_validate_mode_seamless(struct dsi_display *display,
 	}
 
 	/* Currently the only seamless transition is dynamic fps */
-	rc = dsi_display_get_dfps_timing(display, adj_mode, 0, -1);
+	rc = dsi_display_get_dfps_timing(display, adj_mode, 0);
 	if (rc) {
 		DSI_DEBUG("Dynamic FPS not supported for seamless\n");
 	} else {
@@ -5515,9 +5362,7 @@ static int dsi_display_set_mode_sub(struct dsi_display *display,
 					true);
 			dsi_phy_dynamic_refresh_clear(ctrl->phy);
 
-			/* Avoid setting trigger selection for 2.9 due to hardware limitation */
 			if ((ctrl->ctrl->version >= DSI_CTRL_VERSION_2_5) &&
-					(ctrl->ctrl->version != DSI_CTRL_VERSION_2_9) &&
 					(dyn_clk_caps->maintain_const_fps)) {
 				dsi_phy_dynamic_refresh_trigger_sel(ctrl->phy,
 						true);
@@ -5601,12 +5446,7 @@ static int dsi_display_set_mode_sub(struct dsi_display *display,
 		dsi_display_validate_dms_fps(display->panel->cur_mode, mode);
 	}
 
-	if (priv_info->phy_timing_len &&
-		!atomic_read(&display->clkrate_change_pending)) {
-		/*
-		 * In case of clkrate change, the PHY timing update will happen
-		 * together with the clock update.
-		 */
+	if (priv_info->phy_timing_len) {
 		display_for_each_ctrl(i, display) {
 			ctrl = &display->ctrl[i];
 			 rc = dsi_phy_set_timing_params(ctrl->phy,
@@ -7253,7 +7093,6 @@ int dsi_display_get_info(struct drm_connector *connector,
 	info->max_width = 1920;
 	info->max_height = 1080;
 	info->qsync_min_fps = display->panel->qsync_caps.qsync_min_fps;
-	info->hwfence_sw_override_always = display->panel->qsync_caps.hwfence_sw_override_always;
 	info->has_qsync_min_fps_list = (display->panel->qsync_caps.qsync_min_fps_list_len > 0);
 	info->avr_step_fps = display->panel->avr_caps.avr_step_fps;
 	info->esync_enabled = display->panel->esync_caps.esync_support;
@@ -7263,7 +7102,6 @@ int dsi_display_get_info(struct drm_connector *connector,
 	info->esync_emsync_milli_pulse_width = display->panel->esync_caps.emsync_milli_pulse_width;
 	info->vrr_caps.vrr_support = display->panel->vrr_caps.vrr_support;
 	info->vrr_caps.video_psr_support = display->panel->vrr_caps.video_psr_support;
-	info->vrr_caps.video_mrr_support = display->panel->vrr_caps.video_mrr_support;
 	info->vrr_caps.arp_support = display->panel->vrr_caps.arp_support;
 	info->poms_align_vsync = display->panel->poms_align_vsync;
 	info->is_te_using_watchdog_timer = is_sim_panel(display);
@@ -7330,7 +7168,6 @@ void dsi_display_adjust_mode_timing(struct dsi_display *display,
 	u64 new_htotal, new_vtotal, htotal, vtotal, old_htotal, div;
 	struct dsi_dyn_clk_caps *dyn_clk_caps;
 	u32 bits_per_symbol = 16, num_of_symbols = 7; /* For Cphy */
-	int i = 0;
 
 	dyn_clk_caps = &(display->panel->dyn_clk_caps);
 
@@ -7340,7 +7177,6 @@ void dsi_display_adjust_mode_timing(struct dsi_display *display,
 
 	if (!dyn_clk_caps->maintain_const_fps)
 		return;
-
 	/*
 	 * When there is a dynamic clock switch, there is small change
 	 * in FPS. To compensate for this difference in FPS, hfp or vfp
@@ -7382,22 +7218,6 @@ void dsi_display_adjust_mode_timing(struct dsi_display *display,
 				dsi_mode->timing.v_back_porch -
 				dsi_mode->timing.v_sync_width -
 				dsi_mode->timing.v_active;
-		break;
-
-	case DSI_DYN_CLK_TYPE_ADJUST_HFP:
-		for (i = 0; i < dsi_mode->priv_info->bit_clk_list.count; i++)
-			if (dsi_mode->timing.clk_rate_hz ==
-					dsi_mode->priv_info->bit_clk_list.rates[i])
-				dsi_mode->timing.h_front_porch =
-					dsi_mode->priv_info->bit_clk_list.front_porches[i];
-		break;
-
-	case DSI_DYN_CLK_TYPE_ADJUST_VFP:
-		for (i = 0; i < dsi_mode->priv_info->bit_clk_list.count; i++)
-			if (dsi_mode->timing.clk_rate_hz ==
-					dsi_mode->priv_info->bit_clk_list.rates[i])
-				dsi_mode->timing.v_front_porch =
-					dsi_mode->priv_info->bit_clk_list.front_porches[i];
 		break;
 
 	default:
@@ -7510,9 +7330,6 @@ static int dsi_display_mode_dyn_clk_cpy(struct dsi_display *display,
 	memcpy(bit_clk_list->rates, src->priv_info->bit_clk_list.rates,
 			count*sizeof(u32));
 
-	memcpy(bit_clk_list->front_porches, src->priv_info->bit_clk_list.front_porches,
-			count*sizeof(u32));
-
 	bit_clk_list->pixel_clks_khz =
 			kcalloc(count, sizeof(u32), GFP_KERNEL);
 	if (!bit_clk_list->pixel_clks_khz) {
@@ -7564,11 +7381,9 @@ int dsi_display_restore_bit_clk(struct dsi_display *display, struct dsi_display_
 		if (!display->dyn_bit_clk_pending && display->dyn_bit_clk) {
 			switch (display->panel->dyn_clk_caps.type) {
 			case DSI_DYN_CLK_TYPE_CONST_FPS_ADJUST_HFP:
-			case DSI_DYN_CLK_TYPE_ADJUST_HFP:
 				mode->timing.h_front_porch = front_porch;
 				break;
 			case DSI_DYN_CLK_TYPE_CONST_FPS_ADJUST_VFP:
-			case DSI_DYN_CLK_TYPE_ADJUST_VFP:
 				mode->timing.v_front_porch = front_porch;
 				break;
 			default:
@@ -7620,11 +7435,6 @@ int dsi_display_get_modes_helper(struct dsi_display *display,
 		/* Setup widebus support */
 		display_mode.priv_info->widebus_support = ctrl->ctrl->hw.widebus_support;
 
-		if (display->cmdline_timing == display_mode.mode_idx) {
-			topology_override = display->cmdline_topology;
-			is_preferred = true;
-		}
-
 		rc = dsi_panel_get_mode(display->panel, mode_idx,
 						&display_mode,
 						topology_override);
@@ -7635,6 +7445,11 @@ int dsi_display_get_modes_helper(struct dsi_display *display,
 			display_mode.priv_info = NULL;
 			rc = -EINVAL;
 			return rc;
+		}
+
+		if (display->cmdline_timing == display_mode.mode_idx) {
+			topology_override = display->cmdline_topology;
+			is_preferred = true;
 		}
 
 		support_cmd_mode = display_mode.panel_mode_caps & DSI_OP_CMD_MODE;
@@ -7762,7 +7577,7 @@ int dsi_display_get_modes_helper(struct dsi_display *display,
 			}
 
 			dsi_display_get_dfps_timing(display, sub_mode,
-					curr_refresh_rate, i);
+					curr_refresh_rate);
 			sub_mode->panel_mode_caps = DSI_OP_VIDEO_MODE;
 		}
 		end = array_idx;
@@ -7939,25 +7754,6 @@ int dsi_display_get_default_lms(void *dsi_display, u32 *num_lm)
 	mutex_unlock(&display->display_lock);
 
 	return rc;
-}
-
-int dsi_display_avoid_cmd_transfer(void *display, bool avoid_transfer)
-{
-	struct dsi_display *dsi_display = display;
-	struct dsi_panel *panel;
-
-	if (dsi_display == NULL || dsi_display->panel == NULL)
-		return -EINVAL;
-
-	panel = dsi_display->panel;
-	SDE_EVT32(avoid_transfer);
-
-	if (avoid_transfer)
-		mutex_lock(&panel->panel_lock);
-	else
-		mutex_unlock(&panel->panel_lock);
-
-	return 0;
 }
 
 int dsi_display_update_transfer_time(void *display, u32 transfer_time)
@@ -8484,11 +8280,11 @@ int dsi_display_set_mode(struct dsi_display *display,
 
 #ifdef OPLUS_FEATURE_DISPLAY_ADFR
 	DSI_INFO("mdp_transfer_time=%d, hactive=%d, vactive=%d, fps=%d, h_skew=%d, clk_rate=%llu, h_sync_width=%d,\
-				h_front_porch=%d, h_back_porch=%d, v_back_porch=%d, v_sync_width=%d, v_front_porch=%d\n",
+				h_front_porch%d, h_back_porch=%d, v_back_porch=%d, v_sync_width=%d, v_front_porch=%d\n",
 			adj_mode.priv_info->mdp_transfer_time_us,
 			timing.h_active, timing.v_active, timing.refresh_rate, timing.h_skew,
 			adj_mode.priv_info->clk_rate_hz, timing.h_sync_width, timing.h_front_porch,
-			timing.h_back_porch, timing.v_back_porch, timing.v_sync_width, timing.v_front_porch);
+			timing.h_back_porch, timing.v_back_porch, timing.h_sync_width, timing.v_front_porch);
 #else
 	DSI_INFO("mdp_transfer_time=%d, hactive=%d, vactive=%d, fps=%d, clk_rate=%llu\n",
 			adj_mode.priv_info->mdp_transfer_time_us,
@@ -9170,19 +8966,19 @@ exit:
 	return rc;
 }
 
-int dsi_display_process_dcs_cmd_bitmask(void *display, struct msm_display_conn_params *params)
+static int dsi_display_send_pre_commit_cmd(struct dsi_display *display,
+	struct msm_display_conn_params *params)
 {
 	u32 idx;
 	int rc = 0;
 	bool last_command = false;
-	struct dsi_display *dsi_display = display;
 
-	if (!params || !dsi_display) {
+	if (!params || !display) {
 		DSI_ERR("Invalid params\n");
 		return -EINVAL;
 	}
 
-	mutex_lock(&dsi_display->display_lock);
+	mutex_lock(&display->display_lock);
 
 	for (idx = 0; idx < sizeof(params->cmd_bit_mask) * 8; idx++) {
 		if (params->cmd_bit_mask & BIT(idx)) {
@@ -9191,7 +8987,7 @@ int dsi_display_process_dcs_cmd_bitmask(void *display, struct msm_display_conn_p
 
 			SDE_EVT32(idx, last_command, params->cmd_bit_mask>>32,
 				params->cmd_bit_mask, fls64(params->cmd_bit_mask));
-			rc = dsi_panel_send_cmd(dsi_display->panel, params, idx, last_command);
+			rc = dsi_panel_send_cmd(display->panel, params, idx, last_command);
 			if (rc) {
 				DSI_ERR("fail cmd idx:%d rc:%d\n", idx, rc);
 				goto exit;
@@ -9199,7 +8995,7 @@ int dsi_display_process_dcs_cmd_bitmask(void *display, struct msm_display_conn_p
 		}
 	}
 exit:
-	mutex_unlock(&dsi_display->display_lock);
+	mutex_unlock(&display->display_lock);
 	return rc;
 }
 
@@ -9348,11 +9144,8 @@ int dsi_display_pre_kickoff(struct drm_connector *connector,
 		struct dsi_display *display,
 		struct msm_display_kickoff_params *params)
 {
-	struct dsi_display_mode *mode;
 	int rc = 0, ret = 0;
 	int i;
-
-	mode = display->panel->cur_mode;
 
 	/* check and setup MISR */
 	if (display->misr_enable)
@@ -9379,24 +9172,6 @@ int dsi_display_pre_kickoff(struct drm_connector *connector,
 			ret = dsi_ctrl_wait_for_cmd_mode_mdp_idle(ctrl);
 			if (ret)
 				goto wait_failure;
-		}
-
-		if (mode->priv_info->phy_timing_len) {
-			display_for_each_ctrl(i, display) {
-				struct dsi_display_ctrl *ctrl;
-				bool commit_phy_timing = false;
-
-				if (mode->dsi_mode_flags & DSI_MODE_FLAG_DMS)
-					commit_phy_timing = true;
-
-				ctrl = &display->ctrl[i];
-				ret = dsi_phy_set_timing_params(ctrl->phy,
-						mode->priv_info->phy_timing_val,
-						mode->priv_info->phy_timing_len,
-						commit_phy_timing);
-				if (ret)
-					DSI_ERR("failed to add DSI PHY timing params\n");
-			}
 		}
 
 		/*
@@ -9465,6 +9240,9 @@ int dsi_display_pre_commit(void *display,
 		return -EINVAL;
 	}
 
+	if (params->cmd_bit_mask)
+		dsi_display_send_pre_commit_cmd(display, params);
+
 	if (!params->cmd_bit_mask && params->qsync_update) {
 		enable = (params->qsync_mode > 0) ? true : false;
 
@@ -9517,10 +9295,6 @@ int dsi_display_enable(struct dsi_display *display)
 	if (!display || !display->panel) {
 		DSI_ERR("Invalid params\n");
 		return -EINVAL;
-	}
-
-	if (get_eng_version() == FACTORY || get_eng_version() == AGING || get_eng_version() == HIGH_TEMP_AGING) {
-		DSI_ERR("llxxdd");
 	}
 
 	if (!display->panel->cur_mode) {
@@ -9700,7 +9474,7 @@ int dsi_display_post_enable(struct dsi_display *display)
 
 	/* remove the clk vote for CMD mode panels */
 	if (display->config.panel_mode == DSI_OP_CMD_MODE ||
-			display->config.esync_enabled)
+			display->config.video_timing.esync_enabled)
 		dsi_display_clk_ctrl(display->dsi_clk_handle,
 			DSI_CORE_CLK | DSI_LINK_CLK, DSI_CLK_OFF);
 
@@ -9731,7 +9505,7 @@ int dsi_display_pre_disable(struct dsi_display *display)
 
 	/* enable the clk vote for CMD mode panels */
 	if (display->config.panel_mode == DSI_OP_CMD_MODE ||
-			display->config.esync_enabled)
+			display->config.video_timing.esync_enabled)
 		dsi_display_clk_ctrl(display->dsi_clk_handle,
 			DSI_CORE_CLK | DSI_LINK_CLK, DSI_CLK_ON);
 	if (display->poms_pending) {

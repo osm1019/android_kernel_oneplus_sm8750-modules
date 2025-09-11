@@ -23,20 +23,20 @@
 #endif /* OPLUS_FEATURE_DISPLAY_ADFR */
 
 /* -------------------- macro -------------------- */
-#define OPLUS_PWM_MODE					24
+#define OPLUS_PWM_MODE				24
 /* pwm feature bit setting */
-#define OPLUS_PWM_SUPPORT									(BIT(0))
-#define OPLUS_PWM_SWITCH_SUPPORT							(BIT(1))
-#define OPLUS_PWM_SWITCH_CMD_SUPPORT						(BIT(2))
-#define OPLUS_PWM_DBV_THRESHOLD_CMD						(BIT(3))
-#define OPLUS_PWM_DBV_THRESHOLD_CMD_WAIT_TE					(BIT(4))
-#define OPLUS_PWM_CMD_REPLACE								(BIT(5))
-#define OPLUS_PWM_PANEL_ON_EXT_CMD							(BIT(6))
-#define OPLUS_PWM_TIMING_SWITCH_EXT_CMD						(BIT(7))
-#define OPLUS_PWM_DBV_THREESHOLD_EXT_CMD					(BIT(8))
-#define OPLUS_PWM_MODE0					(BIT(24))  /* generally 18 + 3 pulse */
-#define OPLUS_PWM_MODE1					(BIT(25))  /* generally 18 + 1 pulse */
-#define OPLUS_PWM_MODE2					(BIT(26))  /* generally  1 + 1 pulse */
+#define OPLUS_PWM_SUPPORT                         (BIT(0))
+#define OPLUS_PWM_SWITCH_SUPPORT                  (BIT(1))
+#define OPLUS_PWM_SWITCH_CMD_SUPPORT              (BIT(2))
+#define OPLUS_PWM_DBV_THRESHOLD_CMD               (BIT(3))
+#define OPLUS_PWM_DBV_THRESHOLD_CMD_WAIT_TE       (BIT(4))
+#define OPLUS_PWM_CMD_REPLACE                     (BIT(5))
+#define OPLUS_PWM_PANEL_ON_EXT_CMD                (BIT(6))
+#define OPLUS_PWM_TIMING_SWITCH_EXT_CMD           (BIT(7))
+#define OPLUS_PWM_DBV_THREESHOLD_EXT_CMD          (BIT(8))
+#define OPLUS_PWM_MODE0                           (BIT(24))  /* generally 18 + 3 pulse */
+#define OPLUS_PWM_MODE1                           (BIT(25))  /* generally 18 + 1 pulse */
+#define OPLUS_PWM_MODE2                           (BIT(26))  /* generally  1 + 1 pulse */
 
 /* -------------------- extern ---------------------------------- */
 extern u32 oplus_last_backlight;
@@ -329,6 +329,7 @@ int oplus_panel_parse_pwm_config(struct dsi_panel *panel)
 	} else {
 		panel->oplus_panel.pwm_params.pwm_config = val;
 	}
+
 	panel->oplus_panel.pwm_params.pwm_mode_count = -1;
 	panel->oplus_panel.pwm_params.pwm_pulse_state = PWM_STATE_L2;
 	panel->oplus_panel.pwm_params.pwm_pulse_state_last = PWM_STATE_L2;
@@ -371,10 +372,6 @@ int oplus_panel_parse_pwm_config(struct dsi_panel *panel)
 				}
 				panel->oplus_panel.pwm_params.pwm_mode_count = 3;
 			}
-		}
-
-		if (is_project(24018) || is_project(24019)) {
-			panel->oplus_panel.pwm_params.pwm_mode_count--;
 		}
 
 		/* if pwm mode switch support, should parse another mode config */
@@ -1011,12 +1008,6 @@ int oplus_display_panel_get_pwm_turbo(void *data)
 		return rc;
 	}
 
-	/*hummer temp solve fac change pusle*/
-	if (!strcmp(panel->name, "AA590 P 3 A0020 dsc cmd mode panel")) {
-		OPLUS_PWM_INFO("1pulse mode will skip pwm turbo operation\n");
-		return -EINVAL;
-	}
-
 	mutex_lock(&display->display_lock);
 	mutex_lock(&panel->panel_lock);
 
@@ -1048,13 +1039,6 @@ int oplus_display_panel_set_pwm_turbo(void *data)
 		OPLUS_PWM_WARN("Falied to set pwm turbo status, because it is unsupport\n");
 		rc = -EFAULT;
 		return rc;
-	}
-
-
-	/*hummer temp solve fac change pusle*/
-	if (!strcmp(panel->name, "AA590 P 3 A0020 dsc cmd mode panel")) {
-		OPLUS_PWM_INFO("1pulse mode will skip pwm turbo operation\n");
-		return -EINVAL;
 	}
 
 	OPLUS_PWM_INFO("Set pwm turbo status: %d\n", *mode);

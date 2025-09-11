@@ -41,13 +41,9 @@ static u32 sde_hw_util_log_mask = SDE_DBG_MASK_NONE;
 #define QSEED3_CLK_CTRL0                   0x54
 #define QSEED3_CLK_CTRL1                   0x58
 #define QSEED3_CLK_STATUS                  0x5C
-#define QSEED3_ASYM_PHASE_STEP_H           0x68
-#define QSEED3_ASYM_PHASE_STEP_V           0x6C
 #define QSEED3_MISR_CTRL                   0x70
 #define QSEED3_MISR_SIGNATURE_0            0x74
 #define QSEED3_MISR_SIGNATURE_1            0x78
-#define QSEED3_FOV_RE_PHASE_STEP2_V        0x88
-#define QSEED3_FOV_RE_ASYM_PHASE_STEP_V    0x8C
 #define QSEED3_PHASE_INIT_Y_H              0x90
 #define QSEED3_PHASE_INIT_Y_V              0x94
 #define QSEED3_PHASE_INIT_UV_H             0x98
@@ -187,7 +183,7 @@ void sde_reg_write(struct sde_hw_blk_reg_map *c,
 		SDE_DEBUG_DRIVER("[%s:0x%X] <= 0x%X\n",
 				name, c->blk_off + reg_off, val);
 	writel_relaxed(val, c->base_off + c->blk_off + reg_off);
-	SDE_EVT32(c->log_mask ? ilog2(c->log_mask)+1 : 0,
+	SDE_REG_LOG(c->log_mask ? ilog2(c->log_mask)+1 : 0,
 			val, c->blk_off + reg_off);
 }
 
@@ -481,7 +477,6 @@ void sde_hw_setup_scaler_cac(struct sde_hw_blk_reg_map *c,
 
 	opmode |= (cac_cfg->cac_mode << 1);
 	opmode |= (cac_cfg->uv_filter_cfg & 0x3) << 24;
-	opmode |= (cac_cfg->fov_mode & 0x3) << 20;
 
 	phase_step_y_h |= (cac_cfg->cac_le_inc_skip_x[0] << 29) |
 			(cac_cfg->cac_phase_inc_first_x[0] << 28);
@@ -546,14 +541,6 @@ void sde_hw_setup_scaler_cac(struct sde_hw_blk_reg_map *c,
 	SDE_REG_WRITE(c, QSEED3_PHASE_STEP_UV_V + sspp_blk_off,
 				phase_step_uv_v);
 	SDE_REG_WRITE(c, QSEED3_OP_MODE + sspp_blk_off, opmode);
-	SDE_REG_WRITE(c, QSEED3_ASYM_PHASE_STEP_H + sspp_blk_off,
-				(cac_cfg->cac_asym_phase_step_h & 0xFFFFFF));
-	SDE_REG_WRITE(c, QSEED3_ASYM_PHASE_STEP_V + sspp_blk_off,
-				(cac_cfg->cac_asym_phase_step_v & 0xFFFFFF));
-	SDE_REG_WRITE(c, QSEED3_FOV_RE_PHASE_STEP2_V + sspp_blk_off,
-				(cac_cfg->cac_re_phase_step_v & 0xFFFFFF));
-	SDE_REG_WRITE(c, QSEED3_FOV_RE_ASYM_PHASE_STEP_V + sspp_blk_off,
-				(cac_cfg->cac_re_asym_phase_step_v & 0xFFFFFF));
 }
 
 void sde_hw_setup_scaler3(struct sde_hw_blk_reg_map *c,

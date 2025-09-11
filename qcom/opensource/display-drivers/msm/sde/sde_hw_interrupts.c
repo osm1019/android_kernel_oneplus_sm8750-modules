@@ -163,8 +163,6 @@
 #define SDE_INTR_DSICMD_2_OUTOF_STATIC BIT(7)
 #define SDE_INTR_PROG_LINE BIT(8)
 #define SDE_INTR_INTF_WD_TIMER_0_DONE BIT(13)
-#define SDE_INTR_ESYNC_EMSYNC BIT(16)
-#define SDE_INTR_ESYNC_VSYNC  BIT(17)
 
 /**
  * AD4 interrupt status bit definitions
@@ -392,8 +390,6 @@ static struct sde_irq_type sde_irq_intf_map[] = {
 
 	{ SDE_IRQ_TYPE_PROG_LINE, -1, SDE_INTR_PROG_LINE, -1},
 	{ SDE_IRQ_TYPE_WD_TIMER_1, -1, SDE_INTR_INTF_WD_TIMER_0_DONE, -1},
-	{ SDE_IRQ_TYPE_INTF_ESYNC_EMSYNC, -1, SDE_INTR_ESYNC_EMSYNC, -1},
-	{ SDE_IRQ_TYPE_INTF_ESYNC_VSYNC, -1, SDE_INTR_ESYNC_VSYNC, -1},
 };
 
 static struct sde_irq_type sde_irq_ad4_map[] = {
@@ -505,11 +501,17 @@ static void sde_hw_intr_dispatch_irq(struct sde_hw_intr *intr,
 				 reg_idx)) {
 				/*
 				 * Once a match on irq mask, perform a callback
-				 * to the given cbfunc. This callback is done
-				 * after clearing the interrupt registers.
+				 * to the given cbfunc. cbfunc will take care
+				 * the interrupt status clearing. If cbfunc is
+				 * not provided, then the interrupt clearing
+				 * is here.
 				 */
 				if (cbfunc)
 					cbfunc(arg, irq_idx);
+				else
+					intr->ops.clear_intr_status_nolock(
+							intr, irq_idx);
+
 				/*
 				 * When callback finish, clear the irq_status
 				 * with the matching mask. Once irq_status
@@ -872,6 +874,7 @@ static void __setup_intr_ops(struct sde_hw_intr_ops *ops)
 	ops->disable_all_irqs = sde_hw_intr_disable_irqs;
 	ops->get_interrupt_sources = sde_hw_intr_get_interrupt_sources;
 	ops->clear_interrupt_status = sde_hw_intr_clear_interrupt_status;
+	ops->clear_intr_status_nolock = sde_hw_intr_clear_intr_status_nolock;
 	ops->get_interrupt_status = sde_hw_intr_get_interrupt_status;
 	ops->get_intr_status_nolock = sde_hw_intr_get_intr_status_nolock;
 }
@@ -1173,3 +1176,4 @@ exit:
 
 	return intr;
 }
+

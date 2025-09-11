@@ -16,7 +16,6 @@
 #include "oplus_display_device_ioctl.h"
 #include "oplus_display_ffl.h"
 #include "oplus_debug.h"
-#include "oplus_display_ext.h"
 
 extern int dynamic_osc_clock;
 bool oplus_enhance_mipi_strength = false;
@@ -77,25 +76,8 @@ static int oplus_panel_parse_common_config(struct dsi_panel *panel)
 		}
 	}
 
-	panel->oplus_panel.fpga_support = utils->read_bool(utils->data, "oplus,fpga-support");
-	OPLUS_DSI_INFO("fpga support: %s\n", panel->oplus_panel.fpga_support ? "Yes" : "Not");
-	if (panel->oplus_panel.fpga_support) {
-		oplus_panel_register_fpga_notifier();
-	}
-
 	panel->oplus_panel.gamma_compensation_support = utils->read_bool(utils->data, "oplus,gamma-compensation-support");
 	OPLUS_DSI_INFO("panel gamma compensation support: %s\n", panel->oplus_panel.gamma_compensation_support ? "Yes" : "Not");
-
-	panel->oplus_panel.pl_check_enable = utils->read_bool(utils->data, "oplus,pcd-lvd-check-enable");
-	OPLUS_DSI_INFO("oplus,pcd-lvd-check-enable: %s\n", panel->oplus_panel.pl_check_enable ? "Yes" : "Not");
-	if (panel->oplus_panel.pl_check_enable) {
-		panel->oplus_panel.pl_check_flag = true;
-	}
-
-	ret = utils->read_u32(utils->data, "oplus,pcd-lvd-check-time-gap", &panel->oplus_panel.pl_check_time_gap);
-	if (ret) {
-		OPLUS_DSI_INFO("oplus,pcd-lvd-check-time-gap is not config, default 0\n");
-	}
 
 	return 0;
 }
@@ -216,14 +198,6 @@ static int oplus_panel_parse_serial_number_info(struct dsi_panel *panel)
 			panel->oplus_panel.serial_number.serial_number_conut = 5;
 		}
 
-		ret = utils->read_u32(utils->data, "oplus,dsi-serial-number-base-year",
-				&panel->oplus_panel.serial_number.base_year);
-		if (ret) {
-			OPLUS_DSI_INFO("failed to oplus,dsi-serial-number-base-year\n");
-			/* Default oplus,dsi-serial-number-base-year 0 */
-			panel->oplus_panel.serial_number.base_year = 0;
-		}
-
 		panel->oplus_panel.serial_number.is_switch_page = utils->read_bool(utils->data,
 			"oplus,dsi-serial-number-switch-page");
 		OPLUS_DSI_INFO("oplus,dsi-serial-number-switch-page: %s", panel->oplus_panel.serial_number.is_switch_page ? "true" : "false");
@@ -317,11 +291,6 @@ int oplus_panel_parse_features_config(struct dsi_panel *panel)
 	OPLUS_DSI_INFO("oplus,panel_init_compatibility_enable: %s\n",
 			panel->oplus_panel.vid_timming_switch_enabled ? "true" : "false");
 
-	panel->oplus_panel.vid_timming_switch_post_enabled = utils->read_bool(utils->data,
-			"oplus,dsi_vid_timming_switch_post_enable");
-	OPLUS_DSI_INFO("oplus,dsi_vid_timming_switch_post_enable: %s\n",
-			panel->oplus_panel.vid_timming_switch_post_enabled ? "true" : "false");
-
 	panel->oplus_panel.change_voltage_before_panel_bl_0 = utils->read_bool(utils->data,
 			"oplus,change-voltage-before-panel-bl-0-enable");
 	OPLUS_DSI_INFO("oplus,change-voltage-before-panel-bl-0-enable: %s\n",
@@ -331,20 +300,6 @@ int oplus_panel_parse_features_config(struct dsi_panel *panel)
 			"oplus,interval-time-nolp-pre");
 	OPLUS_DSI_INFO("oplus,interval-time-nolp-pre: %s\n",
 			panel->oplus_panel.interval_time_nolp_pre ? "true" : "false");
-
-	panel->oplus_panel.bl_ic_ktz8868_used = utils->read_bool(utils->data,
-		"oplus,bl-use-ktz8868-ic-ctrl");
-	OPLUS_DSI_INFO("oplus,bl-use-ktz8868-ic-ctrl: %s\n",
-		panel->oplus_panel.bl_ic_ktz8868_used ? "true" : "false");
-
-	panel->oplus_panel.white_point_compensation_enabled = utils->read_bool(utils->data,
-			"oplus,dsi-white-point-compensation-enabled");
-	OPLUS_DSI_INFO("oplus,dsi-white-point-compensation-enabled: %s\n", panel->oplus_panel.white_point_compensation_enabled ? "true" : "false");
-
-	panel->oplus_panel.mipi_reset_enable = utils->read_bool(utils->data,
-		"oplus,mipi-reset-enable");
-	OPLUS_DSI_INFO("oplus,mipi-reset-enable: %s\n",
-		panel->oplus_panel.mipi_reset_enable ? "true" : "false");
 
 	return 0;
 }
@@ -392,47 +347,6 @@ int oplus_panel_parse_vsync_config(
 	return 0;
 }
 
-void oplus_panel_parse_ignore_mode_config(struct dsi_panel *panel)
-{
-	int rc = 0;
-	struct dsi_parser_utils *utils = &panel->utils;
-	char payload[128] = "";
-	u32 cnt = 0;
-
-	panel->oplus_panel.ignore_mode_count = utils->count_u32_elems(utils->data,
-			"oplus,factory-ignore-mode");
-	if (panel->oplus_panel.ignore_mode_count < 1) {
-		OPLUS_DSI_INFO("factory ignore mode is NULL!\n");
-		panel->oplus_panel.ignore_mode_count = 0;
-		return;
-	}
-
-	panel->oplus_panel.ignore_mode = kcalloc(panel->oplus_panel.ignore_mode_count,
-			sizeof(u32), GFP_KERNEL);
-	if (!panel->oplus_panel.ignore_mode) {
-		kfree(panel->oplus_panel.ignore_mode);
-		OPLUS_DSI_ERR("factory ignore mode list alloc failed!\n");
-		return;
-	}
-
-	rc = utils->read_u32_array(utils->data,
-			"oplus,factory-ignore-mode",
-			panel->oplus_panel.ignore_mode,
-			panel->oplus_panel.ignore_mode_count);
-
-	if (rc) {
-		OPLUS_DSI_ERR("factory ignore mode list parse failed!\n");
-		return;
-	}
-
-	for (int i = 0; i < panel->oplus_panel.ignore_mode_count; i++) {
-		cnt += scnprintf(payload + cnt, sizeof(payload) - cnt, "[%u]", panel->oplus_panel.ignore_mode[i]);
-	}
-	OPLUS_DSI_INFO("parse ignore mode count: %d, mode_list: %s\n", panel->oplus_panel.ignore_mode_count, payload);
-
-	return;
-}
-
 int oplus_panel_parse_config(struct dsi_panel *panel)
 {
 	if (!panel) {
@@ -452,10 +366,6 @@ int oplus_panel_parse_config(struct dsi_panel *panel)
 	oplus_panel_parse_serial_number_info(panel);
 	oplus_panel_parse_btb_sn_info(panel);
 	oplus_panel_parse_power_sequence_config(panel);
-	oplus_dsi_panel_parse_mipi_err(panel);
-	oplus_dsi_panel_parse_pcd(panel);
-	oplus_dsi_panel_parse_lvd(panel);
-	oplus_panel_parse_ignore_mode_config(panel);
 
 	return 0;
 }

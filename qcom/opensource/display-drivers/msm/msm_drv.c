@@ -63,7 +63,6 @@
 
 #ifdef OPLUS_FEATURE_DISPLAY
 #include "oplus_display_interface.h"
-#include "oplus_bl_ic_ktz8868.h"
 #endif /* OPLUS_FEATURE_DISPLAY */
 
 /*
@@ -2423,8 +2422,8 @@ static void msm_pdev_shutdown(struct platform_device *pdev)
 	}
 
 	priv = ddev->dev_private;
-	if (!priv || !priv->registered) {
-		DRM_ERROR("invalid msm drm private node or drm dev not registered\n");
+	if (!priv) {
+		DRM_ERROR("invalid msm drm private node\n");
 		return;
 	}
 
@@ -2486,9 +2485,6 @@ static int __init msm_drm_register(void)
 	msm_hdmi_register();
 	sde_shd_register();
 	msm_lease_drm_register();
-#ifdef OPLUS_FEATURE_DISPLAY
-	bl_ic_ktz8868_init();
-#endif /* OPLUS_FEATURE_DISPLAY */
 	return 0;
 }
 
@@ -2509,9 +2505,6 @@ static void __exit msm_drm_unregister(void)
 	sde_cesta_unregister();
 	sde_rsc_unregister();
 	sde_shd_unregister();
-#ifdef OPLUS_FEATURE_DISPLAY
-	bl_ic_ktz8868_exit();
-#endif /* OPLUS_FEATURE_DISPLAY */
 	platform_driver_unregister(&msm_platform_driver);
 }
 

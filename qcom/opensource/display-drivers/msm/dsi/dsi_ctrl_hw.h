@@ -475,12 +475,12 @@ struct dsi_ctrl_hw_ops {
 	/**
 	 * set_video_timing() - set up the timing for video frame
 	 * @ctrl:          Pointer to controller host hardware.
-	 * @host_config:   Configuration of DSI host controller.
+	 * @mode:          Video mode information.
 	 *
 	 * Set up the video timing parameters for the DSI video mode operation.
 	 */
 	void (*set_video_timing)(struct dsi_ctrl_hw *ctrl,
-				 struct dsi_host_config *host_config);
+				 struct dsi_mode_info *mode);
 
 	/**
 	 * cmd_engine_setup() - setup dsi host controller for command mode

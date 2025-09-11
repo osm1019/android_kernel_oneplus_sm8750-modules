@@ -160,9 +160,6 @@ struct sde_hw_intf_ops {
 	void (*setup_prg_fetch)(struct sde_hw_intf *intf,
 			const struct intf_prog_fetch *fetch);
 
-	void (*setup_prog_dynref)(struct sde_hw_intf *intf,
-			const u32 prog_dr_start_line);
-
 	void (*setup_rot_start)(struct sde_hw_intf *intf,
 			const struct intf_prog_fetch *fetch);
 
@@ -330,11 +327,6 @@ struct sde_hw_intf_ops {
 	void (*enable_infinite_vfp)(struct sde_hw_intf *intf, bool enable);
 
 	/**
-	 * Get the HW esync timestamp value
-	 */
-	u64 (*get_esync_timestamp)(struct sde_hw_intf *intf);
-
-	/**
 	 * Enable/disable 64 bit compressed data input to interface block
 	 */
 	void (*enable_compressed_input)(struct sde_hw_intf *intf,
@@ -406,11 +398,6 @@ struct sde_hw_intf_ops {
 	 * Update the vsync_count for interface tear check
 	 */
 	void (*update_tearcheck_vsync_count)(struct sde_hw_intf *intf, u32 val);
-
-	/**
-	 * Setup flush snapshot value for HW flush synchronisation
-	 */
-	void (*setup_flush_snapshot)(struct sde_hw_intf *intf, u32 snapshot_val, bool enable);
 };
 
 struct sde_hw_intf {
