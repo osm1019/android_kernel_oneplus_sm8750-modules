@@ -13,13 +13,6 @@
 #include <soc/qcom/minidump.h>
 #include <drm/drm_print.h>
 
-#ifdef OPLUS_FEATURE_DISPLAY
-#include <soc/oplus/system/oplus_project.h>
-extern unsigned int is_project(int project);
-#define OPLUS_DP_CONTROL_GPIO 186
-#define SM8750_AP_GPIO_OFFSET 512
-#endif /* OPLUS_FEATURE_DISPLAY */
-
 /* select an uncommon hex value for the limiter */
 #define SDE_EVTLOG_DATA_LIMITER	(0xC0DEBEEF)
 #define SDE_EVTLOG_FUNC_ENTRY	0x1111

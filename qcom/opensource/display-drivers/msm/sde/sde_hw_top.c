@@ -123,6 +123,8 @@
 #define HW_FENCE_INPUT_FENCE_ID_MASK_ALL 0xFFFFFFFF
 #define HW_FENCE_INPUT_FENCE_ID_MASK_SIGNAL 0xFFFF
 
+#define DEMURA_SW_FUSE_OFFSET 0x7C
+
 static int ppb_offset_map[PINGPONG_MAX] = {1, 0, 3, 2, 5, 4, 7, 7, 6, 6, -1, -1};
 
 static void sde_hw_setup_split_pipe(struct sde_hw_mdp *mdp,
@@ -348,18 +350,6 @@ static void _update_vsync_source(struct sde_hw_mdp *mdp,
 		/* make sure that timers are enabled/disabled for vsync state */
 		wmb();
 	}
-}
-
-static void sde_hw_setup_flush_sync_intf_mux(struct sde_hw_mdp *mdp, int intf_idx)
-{
-	struct sde_hw_blk_reg_map *c;
-
-	if (!mdp)
-		return;
-
-	c = &mdp->hw;
-
-	SDE_REG_WRITE(c, MDP_FLUSH_SYNC_INTF_MUX, intf_idx);
 }
 
 static void sde_hw_setup_vsync_source(struct sde_hw_mdp *mdp,
@@ -962,9 +952,6 @@ static void _setup_mdp_ops(struct sde_hw_mdp_ops *ops, unsigned long cap, u32 hw
 
 	if (cap & BIT(SDE_MDP_DUAL_DPU_SYNC))
 		ops->dpu_sync_intf_mux = sde_hw_setup_dpu_sync_intf_mux;
-
-	if (cap & BIT(SDE_MDP_HW_FLUSH_SYNC))
-		ops->flush_sync_intf_mux = sde_hw_setup_flush_sync_intf_mux;
 }
 
 static const struct sde_mdp_cfg *_top_offset(enum sde_mdp mdp,
@@ -1067,15 +1054,6 @@ struct sde_hw_sw_fuse *sde_hw_sw_fuse_init(void __iomem *addr,
 	c->hw.length = sw_fuse_len;
 	c->hw.hw_rev = m->hw_rev;
 
-	if (IS_TUNA_TARGET(c->hw.hw_rev) || IS_KERA_TARGET(c->hw.hw_rev))
-		c->demura_sw_fuse_offset = 0x88;
-	else if (IS_SUN_TARGET(c->hw.hw_rev))
-		c->demura_sw_fuse_offset = 0x7c;
-	else if (IS_CANOE_TARGET(c->hw.hw_rev))
-		c->demura_sw_fuse_offset = 0x84;
-	else
-		c->demura_sw_fuse_offset = 0;
-
 	return c;
 }
 
@@ -1088,8 +1066,8 @@ u32 sde_hw_get_demura_sw_fuse_value(struct sde_hw_sw_fuse *sw_fuse)
 {
 	u32 demura_sw_fuse = 0;
 
-	if (sw_fuse && sw_fuse->demura_sw_fuse_offset)
-		demura_sw_fuse = SDE_REG_READ(&sw_fuse->hw, sw_fuse->demura_sw_fuse_offset);
+	if (sw_fuse)
+		demura_sw_fuse = SDE_REG_READ(&sw_fuse->hw, DEMURA_SW_FUSE_OFFSET);
 
 	return demura_sw_fuse;
 }

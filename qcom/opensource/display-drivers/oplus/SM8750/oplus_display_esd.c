@@ -155,7 +155,8 @@ int oplus_display_status_check_error_flag(struct dsi_display *display)
 		return rc;
 	}
 
-	if (gpio_is_valid(esd_config->oplus_esd_cfg.esd_error_flag_gpio)) {
+	if (gpio_is_valid(esd_config->oplus_esd_cfg.esd_error_flag_gpio)
+		&& gpio_is_valid(esd_config->oplus_esd_cfg.esd_error_flag_gpio_slave)) {
 		rc = gpio_request(esd_config->oplus_esd_cfg.esd_error_flag_gpio, "error-flag-gpio");
 		if (rc < 0) {
 			OPLUS_DSI_ERR("[ESD]: request esd_error_flag_gpio[%d] fail, rc=%d\n",
@@ -168,17 +169,7 @@ int oplus_display_status_check_error_flag(struct dsi_display *display)
 				esd_config->oplus_esd_cfg.esd_error_flag_gpio, rc);
 			return no_check;
 		}
-		read_value = gpio_get_value(esd_config->oplus_esd_cfg.esd_error_flag_gpio);
-		gpio_free(esd_config->oplus_esd_cfg.esd_error_flag_gpio);
-		OPLUS_DSI_INFO("[ESD]: read: master=%d, mipi_err_expect_value=%d\n",
-			read_value, esd_config->oplus_esd_cfg.esd_error_flag_expect_value);
-		if (read_value != esd_config->oplus_esd_cfg.esd_error_flag_expect_value) {
-			OPLUS_DSI_ERR("[ESD]: check failed! rc=%d\n", rc);
-			return -EINVAL;
-		}
-	}
 
-	if (gpio_is_valid(esd_config->oplus_esd_cfg.esd_error_flag_gpio_slave)) {
 		rc = gpio_request(esd_config->oplus_esd_cfg.esd_error_flag_gpio_slave, "error-flag-gpio-slave");
 		if (rc < 0) {
 			OPLUS_DSI_ERR("[ESD]: request esd_error_flag_gpio_slave[%d] fail, rc=%d\n",
@@ -191,14 +182,24 @@ int oplus_display_status_check_error_flag(struct dsi_display *display)
 				esd_config->oplus_esd_cfg.esd_error_flag_gpio_slave, rc);
 			return no_check;
 		}
+
+		read_value = gpio_get_value(esd_config->oplus_esd_cfg.esd_error_flag_gpio);
 		read_value_slave = gpio_get_value(esd_config->oplus_esd_cfg.esd_error_flag_gpio_slave);
-		gpio_free(esd_config->oplus_esd_cfg.esd_error_flag_gpio_slave);
-		OPLUS_DSI_INFO("[ESD]: read: slave=%d, mipi_err_expect_value_slave=%d\n",
-			read_value_slave, esd_config->oplus_esd_cfg.esd_error_flag_expect_value_slave);
-		if (read_value_slave != esd_config->oplus_esd_cfg.esd_error_flag_expect_value_slave) {
-			OPLUS_DSI_ERR("[ESD]: check failed! rc=%d\n", rc);
-			return -EINVAL;
+		OPLUS_DSI_INFO("[ESD]: first read: master=%d slave=%d\n", read_value, read_value_slave);
+		if (read_value || read_value_slave) {
+			msleep(100);
+			read_value = gpio_get_value(esd_config->oplus_esd_cfg.esd_error_flag_gpio);
+			read_value_slave = gpio_get_value(esd_config->oplus_esd_cfg.esd_error_flag_gpio_slave);
+			OPLUS_DSI_INFO("[ESD]: second read: master=%d slave=%d\n", read_value, read_value_slave);
+			if (read_value || read_value_slave) {
+				OPLUS_DSI_ERR("[ESD]: check failed! rc=%d\n", rc);
+				gpio_free(esd_config->oplus_esd_cfg.esd_error_flag_gpio);
+				gpio_free(esd_config->oplus_esd_cfg.esd_error_flag_gpio_slave);
+				return -EINVAL;
+			}
 		}
+		gpio_free(esd_config->oplus_esd_cfg.esd_error_flag_gpio);
+		gpio_free(esd_config->oplus_esd_cfg.esd_error_flag_gpio_slave);
 	}
 
 	return no_check;

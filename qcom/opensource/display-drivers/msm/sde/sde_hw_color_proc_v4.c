@@ -738,32 +738,6 @@ void sde_demura_read_plane_status(struct sde_hw_dspp *ctx, u32 *status)
 	}
 }
 
-void sde_demura_read_plane_status_v3(struct sde_hw_dspp *ctx, u32 *status)
-{
-	u32 demura_base;
-	u32 value;
-
-	if (!ctx) {
-		DRM_ERROR("invalid parameter ctx %pK", ctx);
-		return;
-	}
-
-	*status = DEM_FETCH_DMA_INVALID;
-	demura_base = ctx->cap->sblk->demura.base;
-	value = SDE_REG_READ(&ctx->hw, demura_base + 0x18);
-	if (ctx->idx == DSPP_0 || ctx->idx == DSPP_2) {
-		if (value == 0x1)
-			*status = DEM_FETCH_DMA1_RECT0;
-		else if (value == 0x3)
-			*status = DEM_FETCH_DMA3_RECT0;
-	} else if (ctx->idx == DSPP_1 || ctx->idx == DSPP_3) {
-		if (value == 0x1)
-			*status = DEM_FETCH_DMA1_RECT1;
-		else if (value == 0x3)
-			*status = DEM_FETCH_DMA3_RECT1;
-	}
-}
-
 void sde_demura_pu_cfg(struct sde_hw_dspp *dspp, void *cfg)
 {
 	u32 demura_base;
@@ -890,7 +864,7 @@ int sde_spr_check_udc_cfg(struct sde_hw_dspp *ctx, void *cfg)
 		}
 
 		j = 0;
-		limit = (w >> 1);
+		limit = (w >> 1) + 1;
 		for (j = 0; j < lines; j++) {
 			uint32_t o1 = spr_payload->cfg2[cfg_1_start + (j*2)];
 			uint32_t o2 = spr_payload->cfg2[cfg_1_start + (j*2) + 1];
@@ -900,8 +874,8 @@ int sde_spr_check_udc_cfg(struct sde_hw_dspp *ctx, void *cfg)
 				DRM_ERROR("Invalid CFG2 - C%u L%u, o1 exceeds limits",
 						i, j);
 				return -EINVAL;
-			} else if (o2 < limit) {
-				DRM_ERROR("Invalid CFG2 - C%u L%u, o2 should exceeds limits",
+			} else if (o2 > limit) {
+				DRM_ERROR("Invalid CFG2 - C%u L%u, o2 exceeds limits",
 						i, j);
 				return -EINVAL;
 			}

@@ -29,10 +29,6 @@
 #include "oplus_display_device.h"
 #include "oplus_display_proc.h"
 
-#ifdef OPLUS_FEATURE_TP_BASIC
-#include "oplus_display_notify_tp.h"
-#endif /* OPLUS_FEATURE_TP_BASIC */
-
 #define OPLUS_BACKLIGHT_WINDOW_SIZE 5
 
 extern bool is_lhbm_panel;
@@ -45,10 +41,7 @@ extern struct dc_apollo_pcc_sync dc_apollo;
 extern int oplus_display_private_api_init(void);
 extern void oplus_display_private_api_exit(void);
 extern struct panel_id panel_id;
-extern int is_fpga_work_okay(void);
-extern bool oplus_ofp_get_aod_state(void);
 
-bool g_oplus_send_fps_code = false;
 unsigned int oplus_bl_print_window = OPLUS_BACKLIGHT_WINDOW_SIZE;
 extern char oplus_global_hbm_flags;
 extern int dcc_flags;
@@ -58,9 +51,6 @@ extern bool g_gamma_regs_read_done;
 static DEFINE_SPINLOCK(g_bk_lock);
 
 struct oplus_display_ops oplus_display_ops = {};
-#ifdef OPLUS_FEATURE_TP_BASIC
-struct oplus_display_notify_tp_ops oplus_display_notify_tp_ops = {};
-#endif /* OPLUS_FEATURE_TP_BASIC */
 
 void oplus_display_set_backlight_pre(struct dsi_display *display, int *bl_lvl, int brightness)
 {
@@ -152,12 +142,7 @@ void oplus_panel_set_backlight_pre(struct dsi_display *display, int *bl_lvl)
 
 	*bl_lvl = oplus_panel_silence_backlight(panel, *bl_lvl);
 
-	if(panel->oplus_panel.bl_ic_ktz8868_used) {
-		oplus_printf_backlight_8868_log(display, *bl_lvl);
-	} else {
-		oplus_printf_backlight_log(display, *bl_lvl);
-	}
-
+	oplus_printf_backlight_log(display, *bl_lvl);
 
 	return;
 }
@@ -179,13 +164,6 @@ void oplus_bridge_pre_enable(struct dsi_display *display, struct dsi_display_mod
 	return;
 }
 
-void oplus_bridge_post_enable(struct dsi_display *display, struct dsi_display_mode *mode)
-{
-	oplus_panel_switch_vid_mode_post(display, mode);
-
-	return;
-}
-
 void oplus_display_enable_pre(struct dsi_display *display)
 {
 	int rc = 0;
@@ -193,7 +171,6 @@ void oplus_display_enable_pre(struct dsi_display *display)
 	display->panel->oplus_panel.power_mode_early = SDE_MODE_DPMS_ON;
 	display->panel->power_mode = SDE_MODE_DPMS_ON;
 	__oplus_read_apl_thread_ctl(true);
-	__oplus_vid_sync_backlight_thread_ctl(true);
 
 	if (display->oplus_display.panel_sn != 0) {
 		OPLUS_DSI_INFO("panel serial_number have read in UEFI, serial_number = [%016lX]\n",
@@ -203,9 +180,6 @@ void oplus_display_enable_pre(struct dsi_display *display)
 		OPLUS_DSI_INFO("panel serial_number don't read in UEFI, read panel serial_number = [%016lX]\n",
 					display->oplus_display.panel_sn);
 	}
-
-	/* Force update of demurra2 offset from UEFI stage to Kernel stage*/
-	oplus_panel_need_to_set_demura2_offset(display->panel);
 
 	if (!strcmp(display->panel->name, "AA590 P 3 A0020 dsc cmd mode panel")) {
 		if (oplus_display_panel_A0020_gamma_compensation(display)) {
@@ -230,9 +204,8 @@ void oplus_display_enable_pre(struct dsi_display *display)
 void oplus_display_enable_mid(struct dsi_display *display)
 {
 	oplus_display_update_current_display();
-
-	/* Force update of demurra2 offset when panel power on*/
-	oplus_panel_need_to_set_demura2_offset(display->panel);
+	/*add for panel init code compatibility*/
+	oplus_panel_id_compatibility_init(display);
 
 	return;
 }
@@ -289,7 +262,7 @@ int oplus_panel_enable_post(struct dsi_panel *panel)
 	panel->oplus_panel.need_power_on_backlight = true;
 	panel->power_mode = SDE_MODE_DPMS_ON;
 
-	return rc;
+	return 0;
 }
 
 void oplus_panel_switch_pre(struct dsi_panel *panel)
@@ -311,6 +284,8 @@ void oplus_panel_enable_init(struct dsi_panel *panel)
 {
 	/* initialize panel status */
 	oplus_panel_init(panel);
+	/* Force update of demurra2 offset from UEFI stage to Kernel stage or panel power on*/
+	oplus_panel_need_to_set_demura2_offset(panel);
 
 	return;
 }
@@ -319,14 +294,6 @@ void oplus_display_disable_post(struct dsi_display *display)
 {
 	oplus_display_update_current_display();
 	display->panel->oplus_panel.power_mode_early = SDE_MODE_DPMS_OFF;
-
-	return;
-}
-
-void oplus_panel_disable_pre(struct dsi_panel *panel)
-{
-	OPLUS_DSI_INFO("oplus_panel_disable\n");
-	oplus_panel_pl_check_state(panel);
 
 	return;
 }
@@ -347,17 +314,8 @@ void oplus_encoder_kickoff(struct drm_encoder *drm_enc, struct sde_encoder_virt 
 		}
 	} else {
 		oplus_sync_panel_brightness_v2(drm_enc);
-
-		__oplus_vid_sync_backlight_thread_ctl(true);
 	}
 	oplus_set_osc_status(drm_enc);
-
-	return;
-}
-
-void oplus_encoder_kickoff_post(struct drm_encoder *drm_enc, struct sde_encoder_virt *sde_enc)
-{
-	oplus_sync_panel_brightness_video(drm_enc);
 
 	return;
 }
@@ -389,11 +347,6 @@ bool oplus_display_check_status_pre(struct dsi_panel *panel)
 		OPLUS_DSI_INFO("Skip the check because panel power mode isn't power on, "
 				"power_mode_early=%d, power_mode=%d\n",
 				panel->oplus_panel.power_mode_early, panel->power_mode);
-		return true;
-	}
-
-	if (!strcmp(panel->name, "AC274 P 3 A0026 dsc video mode panel") && oplus_ofp_get_aod_state()) {
-		OPLUS_DSI_INFO("Skip the check because aod mode\n");
 		return true;
 	}
 
@@ -576,28 +529,15 @@ int oplus_panel_parse_esd_reg_read_configs_post(struct dsi_panel *panel)
 
 void oplus_panel_parse_esd_config_post(struct dsi_panel *panel)
 {
-	int ret = 0;
 	struct dsi_parser_utils *utils = &panel->utils;
 
 	panel->esd_config.oplus_esd_cfg.esd_error_flag_gpio = utils->get_named_gpio(utils->data,
 			"qcom,error-flag-gpio", 0);
 	panel->esd_config.oplus_esd_cfg.esd_error_flag_gpio_slave = utils->get_named_gpio(utils->data,
 			"qcom,error-flag-gpio-slave", 0);
-	ret = utils->read_u32(utils->data, "qcom,error-flag-gpio-expect-value",
-			&panel->esd_config.oplus_esd_cfg.esd_error_flag_expect_value);
-	if (ret) {
-		OPLUS_DSI_INFO("failed to get qcom,error-flag-gpio-expect-value\n");
-		panel->esd_config.oplus_esd_cfg.esd_error_flag_expect_value = 1;
-	}
-	ret = utils->read_u32(utils->data, "qcom,error-flag-gpio-expect-value-slave",
-			&panel->esd_config.oplus_esd_cfg.esd_error_flag_expect_value_slave);
-	if (ret) {
-		OPLUS_DSI_INFO("failed to get qcom,error-flag-gpio-expect-value-slave\n");
-		panel->esd_config.oplus_esd_cfg.esd_error_flag_expect_value_slave = 1;
-	}
-	DSI_INFO("%s:get esd_error_flag_gpio[%d], esd_error_flag_gpio_slave[%d], esd_error_flag_expect_value[%d], esd_error_flag_expect_value_slave[%d]\n",
-			__func__, panel->esd_config.oplus_esd_cfg.esd_error_flag_gpio, panel->esd_config.oplus_esd_cfg.esd_error_flag_gpio_slave,
-			panel->esd_config.oplus_esd_cfg.esd_error_flag_expect_value, panel->esd_config.oplus_esd_cfg.esd_error_flag_expect_value_slave);
+	DSI_INFO("%s:get esd_error_flag_gpio[%d], esd_error_flag_gpio_slave[%d]\n",
+			__func__, panel->esd_config.oplus_esd_cfg.esd_error_flag_gpio, panel->esd_config.oplus_esd_cfg.esd_error_flag_gpio_slave);
+
 	return;
 }
 
@@ -695,32 +635,11 @@ void oplus_encoder_off_work(struct sde_encoder_virt *sde_enc)
 	return;
 }
 
-void oplus_encoder_trigger_start(struct sde_encoder_phys *cur_master)
+void oplus_encoder_trigger_start(void)
 {
-	struct sde_connector *c_conn = NULL;
-	struct dsi_display *display = NULL;
-
-	if (!cur_master) {
-		OPLUS_DSI_ERR("invalid cur_master params\n");
-		return;
-	}
-	c_conn = to_sde_connector(cur_master->connector);
-	if (!c_conn) {
-		OPLUS_DSI_ERR("invalid c_conn param\n");
-		return;
-	}
-	if (c_conn->connector_type != DRM_MODE_CONNECTOR_DSI) {
-		OPLUS_DSI_INFO("connector not in dsi mode");
-		return;
-	}
-	display = c_conn->display;
-	if (!display || !display->panel) {
-		OPLUS_DSI_ERR("invalid display param\n");
-		return;
-	}
 	/* sending commands asynchronously, it is necessary to ensure that
 		   the next frame mipi sends the image */
-	oplus_panel_send_asynchronous_cmd(display);
+	oplus_panel_send_asynchronous_cmd();
 
 	return;
 }
@@ -828,46 +747,10 @@ void oplus_dsi_message_tx_post(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *c
 int oplus_display_validate_status(struct dsi_display *display)
 {
 	int rc = 0;
-	struct sde_connector *sde_conn;
-
-	if (!display) {
-		OPLUS_DSI_ERR("Invalid display\n");
-		return false;
-	}
-
-	sde_conn = to_sde_connector(display->drm_conn);
-	if (g_oplus_send_fps_code || atomic_read(&sde_conn->oplus_conn.bl_need_update)) {
-		OPLUS_DSI_INFO("Set other dsi cmd, skip esd check!\n");
-		return true;
-	}
 
 	rc = oplus_panel_validate_reg_read(display->panel);
 
 	return rc;
-}
-
-void oplus_connector_check_status_work(void *dsi_display)
-{
-	int rc = 0;
-	struct dsi_display *primary_display = get_main_display();
-
-	if (!primary_display || !primary_display->panel) {
-		OPLUS_DSI_ERR("primary display or primary_display->panel is null\n");
-		return;
-	}
-
-	if (!primary_display->panel->oplus_panel.fpga_support) {
-		OPLUS_DSI_INFO("panel isn't support fpga\n");
-		return;
-	}
-
-	primary_display->panel->oplus_panel.skip_panel_recovery = true;
-	rc = is_fpga_work_okay();
-	if (rc) {
-		OPLUS_DSI_ERR("fpga work failed\n");
-	} else {
-		OPLUS_DSI_INFO("fpga self-check pass\n");
-	}
 }
 
 int oplus_panel_parse_cmd_sets_sub(struct dsi_panel_cmd_set *cmd, const char *state)
@@ -939,96 +822,6 @@ void oplus_panel_set_nolp_post(struct dsi_panel *panel)
 	return;
 }
 
-void oplus_sde_encoder_handle_framedone_timeout_pre(struct drm_connector *conn)
-{
-	struct sde_connector *sde_conn = NULL;
-	struct dsi_display *display = NULL;
-	struct dsi_panel *panel = NULL;
-
-	if (!conn) {
-		OPLUS_DSI_ERR("drm_connector is null\n");
-		return;
-	}
-	sde_conn = to_sde_connector(conn);
-	if (!sde_conn) {
-		OPLUS_DSI_ERR("sde_connector is null\n");
-		return;
-	}
-	display = _sde_connector_get_display(sde_conn);
-	if (!display) {
-		OPLUS_DSI_ERR("display is null\n");
-		return;
-	}
-	panel = display->panel;
-	if (!panel) {
-		OPLUS_DSI_ERR("panel is null\n");
-		return;
-	}
-
-	OPLUS_DSI_ERR("framedone timeout\n");
-	oplus_panel_check_fpga(panel);
-
-	return;
-}
-void oplus_sde_encoder_phys_cmd_wait_for_wr_ptr_pre(struct drm_connector *conn)
-{
-	struct sde_connector *sde_conn = NULL;
-	struct dsi_display *display = NULL;
-	struct dsi_panel *panel = NULL;
-
-	if (!conn) {
-		OPLUS_DSI_ERR("drm_connector is null\n");
-		return;
-	}
-	sde_conn = to_sde_connector(conn);
-	if (!sde_conn) {
-		OPLUS_DSI_ERR("sde_connector is null\n");
-		return;
-	}
-	display = _sde_connector_get_display(sde_conn);
-	if (!display) {
-		OPLUS_DSI_ERR("display is null\n");
-		return;
-	}
-	panel = display->panel;
-	if (!panel) {
-		OPLUS_DSI_ERR("panel is null\n");
-		return;
-	}
-
-	OPLUS_DSI_ERR("wait for wr_ptr timeout\n");
-	oplus_panel_check_fpga(panel);
-
-	return;
-}
-
-void oplus_dsi_ctrl_configure_pre(struct dsi_ctrl *dsi_ctrl, u32 *sched_line_no)
-{
-	struct dsi_mode_info *timing = &(dsi_ctrl->host_config.video_timing);
-	struct dsi_display *display = get_main_display();
-	char tag_name[64];
-	u32 refresh_rate = 0;
-
-	if (!display || !display->panel) {
-		OPLUS_DSI_ERR("primary display or primary_display->panel is null\n");
-		return;
-	}
-
-	if (display->panel->cur_mode) {
-		refresh_rate = display->panel->cur_mode->timing.refresh_rate;
-	}
-	if (display->panel->oplus_panel.last_refresh_rate != refresh_rate) {
-		g_oplus_send_fps_code = true;
-	}
-	*sched_line_no = g_oplus_send_fps_code ? 1 : ((*sched_line_no == 0) ? 1 :*sched_line_no);
-	snprintf(tag_name, sizeof(tag_name), "cur_refresh_rate[%d]-*sched_line_no[%d]", timing->refresh_rate, *sched_line_no);
-
-	SDE_ATRACE_BEGIN(tag_name);
-	SDE_ATRACE_END(tag_name);
-	SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_EXIT,
-		*sched_line_no);
-}
-
 void oplus_display_ops_init(struct oplus_display_ops *oplus_display_ops)
 {
 	DRM_INFO("oplus display ops init\n");
@@ -1045,7 +838,6 @@ void oplus_display_ops_init(struct oplus_display_ops *oplus_display_ops)
 
 	/* commit */
 	oplus_display_ops->encoder_kickoff = oplus_encoder_kickoff;
-	oplus_display_ops->encoder_kickoff_post = oplus_encoder_kickoff_post;
 	oplus_display_ops->display_validate_mode_change_pre = oplus_display_validate_mode_change_pre;
 	oplus_display_ops->display_validate_mode_change_post = oplus_display_validate_mode_change_post;
 	oplus_display_ops->dsi_phy_hw_dphy_enable = oplus_dsi_phy_hw_dphy_enable;
@@ -1061,7 +853,6 @@ void oplus_display_ops_init(struct oplus_display_ops *oplus_display_ops)
 
 	/* power on */
 	oplus_display_ops->bridge_pre_enable = oplus_bridge_pre_enable;
-	oplus_display_ops->bridge_post_enable = oplus_bridge_post_enable;
 	oplus_display_ops->display_enable_pre = oplus_display_enable_pre;
 	oplus_display_ops->display_enable_mid = oplus_display_enable_mid;
 	oplus_display_ops->display_enable_post = oplus_display_enable_post;
@@ -1075,7 +866,6 @@ void oplus_display_ops_init(struct oplus_display_ops *oplus_display_ops)
 
 	/* power off */
 	oplus_display_ops->display_disable_post = oplus_display_disable_post;
-	oplus_display_ops->panel_disable_pre = oplus_panel_disable_pre;
 	oplus_display_ops->panel_disable_post = oplus_panel_disable_post;
 	oplus_display_ops->panel_power_off = oplus_panel_power_off;
 
@@ -1090,7 +880,6 @@ void oplus_display_ops_init(struct oplus_display_ops *oplus_display_ops)
 	oplus_display_ops->display_check_status_pre = oplus_display_check_status_pre;
 	oplus_display_ops->display_check_status_post = oplus_display_check_status_post;
 	oplus_display_ops->display_validate_status = oplus_display_validate_status;
-	oplus_display_ops->connector_check_status_work = oplus_connector_check_status_work;
 
 	/* starting up/down */
 	oplus_display_ops->display_parse_cmdline_topology = oplus_display_parse_cmdline_topology;
@@ -1115,18 +904,10 @@ void oplus_display_ops_init(struct oplus_display_ops *oplus_display_ops)
 	oplus_display_ops->dsi_message_tx_pre = oplus_dsi_message_tx_pre;
 	oplus_display_ops->dsi_message_tx_post = oplus_dsi_message_tx_post;
 	oplus_display_ops->panel_parse_cmd_sets_sub = oplus_panel_parse_cmd_sets_sub;
-	oplus_display_ops->dsi_ctrl_configure_pre = oplus_dsi_ctrl_configure_pre;
 
 	/* aod */
 	oplus_display_ops->panel_set_lp1 = oplus_panel_set_lp1;
 	oplus_display_ops->panel_set_lp2 = oplus_panel_set_lp2;
 	oplus_display_ops->panel_set_nolp_pre = oplus_panel_set_nolp_pre;
 	oplus_display_ops->panel_set_nolp_post = oplus_panel_set_nolp_post;
-
-	oplus_display_ops->wait_for_wr_ptr_pre = oplus_sde_encoder_phys_cmd_wait_for_wr_ptr_pre;
-	oplus_display_ops->handle_framedone_timeout_pre = oplus_sde_encoder_handle_framedone_timeout_pre;
-
-#ifdef OPLUS_FEATURE_TP_BASIC /* tp notifier */
-	oplus_display_notify_tp_ops_init(&oplus_display_notify_tp_ops);
-#endif /* OPLUS_FEATURE_TP_BASIC */
 }

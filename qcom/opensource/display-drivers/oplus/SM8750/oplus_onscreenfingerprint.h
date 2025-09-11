@@ -9,7 +9,6 @@
 
 #ifndef _OPLUS_ONSCREENFINGERPRINT_H_
 #define _OPLUS_ONSCREENFINGERPRINT_H_
-#define VIDEO_AOD_BRIGHTNESS_VALUE_COUNT 4
 
 /* please just only include linux common head file to keep me pure */
 #include "oplus_display_sysfs_attrs.h"
@@ -125,12 +124,6 @@ enum oplus_ofp_longrui_aod_mode {					/* system setting */
 	OPLUS_OFP_FULL_SCREEN_AOD_MODE = BIT(2),
 };
 
-enum oplus_ofp_video_aod_starte {					/* Video mode 30hz AOD seeting */
-	OPLUS_OFP_VIDEO_AOD_STATE_BASE = 0,
-	OPLUS_OFP_VIDEO_AOD_STATE_READY = 1,
-	OPLUS_OFP_VIDEO_AOD_STATE_READY_END = 2,
-};
-
 /* remember to initialize params */
 struct oplus_ofp_params {
 	unsigned int fp_type;							/*
@@ -144,7 +137,6 @@ struct oplus_ofp_params {
 													 bit(7):ultra low power aod
 													 bit(8):fod color feature flag
 													 bit(9):video mode aod && fod
-													 bit(10):local hbm unlocking acceleration
 													*/
 	bool fp_type_compatible_mode;					/* indicates whether fp type compatible mode is set or not */
 	bool need_to_bypass_gamut;						/* indicates whether gamut needs to be bypassed in aod/fod scenarios or not */
@@ -162,10 +154,8 @@ struct oplus_ofp_params {
 	unsigned int notifier_chain_value;				/* ui ready notifier chain value */
 	struct workqueue_struct *uiready_event_wq;		/* a workqueue used to send uiready event */
 	struct work_struct uiready_event_work;			/* a work struct used to send uiready event */
-	struct hrtimer timer;							/* add for uiready notifier call chain */
 	/* aod */
 	bool doze_active;								/* indicates whether the current power mode is doze/doze suspend or not */
-	bool need_to_sync_data_in_aod_on;				/* indicates whether need to do some frames delay in aod on or not  */
 	bool aod_state;									/* indicates whether panel is aod state or not */
 	bool need_to_wait_data_before_aod_on;			/* indicates whether display on cmd(29h) needs to be sent after image data write before aod on or not */
 	bool need_to_wait_te_before_aod_on;				/* indicates whether need to wait for TE before AOD on, avoid aod on cmd crossing TE */
@@ -197,11 +187,6 @@ struct oplus_ofp_params {
 	struct workqueue_struct *aod_off_set_wq;		/* a workqueue used to send aod off cmds to speed up aod unlocking */
 	struct work_struct aod_off_set_work;			/* a work struct used to send aod off cmds to speed up aod unlocking */
 	struct notifier_block touchpanel_event_notifier;/* add for touchpanel event notifier */
-	/* add for enter aod change brightness by light sensor*/
-	bool video_mode_aod_brightness_change_enable;
-	u32 video_mode_aod_brightness_value_count;
-	u8 video_mode_aod_high_brightness_values[VIDEO_AOD_BRIGHTNESS_VALUE_COUNT];
-	u8 video_mode_aod_low_brightness_values[VIDEO_AOD_BRIGHTNESS_VALUE_COUNT];
 };
 
 /* log level config */
@@ -212,8 +197,6 @@ extern unsigned int oplus_ofp_display_id;
 extern unsigned int oplus_display_log_type;
 /* dynamic trace enable */
 extern unsigned int oplus_display_trace_enable;
-/*Flag for video mode frame rate update*/
-extern int oplus_ofp_refresh_flag;
 
 /* debug log */
 #define OFP_ERR(fmt, arg...)	\
@@ -250,8 +233,6 @@ bool oplus_ofp_optical_new_solution_is_enabled(void);
 bool oplus_ofp_local_hbm_is_enabled(void);
 bool oplus_ofp_ultrasonic_is_enabled(void);
 bool oplus_ofp_video_mode_aod_fod_is_enabled(void);
-bool oplus_ofp_local_hbm_unlocking_acceleration_is_enabled(void);
-bool oplus_ofp_video_mode_30hz_aod_is_enabled(void);
 bool oplus_ofp_get_hbm_state(void);
 int oplus_ofp_property_update(void *sde_connector, void *sde_connector_state, int prop_id, uint64_t prop_val);
 
@@ -261,15 +242,11 @@ int oplus_ofp_lhbm_pressed_icon_gamma_update(void *dsi_display);
 int oplus_ofp_lhbm_backlight_update(void *sde_encoder_virt, void *dsi_panel, unsigned int *bl_level);
 int oplus_ofp_send_hbm_state_event(unsigned int hbm_state);
 int oplus_ofp_hbm_handle(void *sde_encoder_virt);
-int oplus_ofp_lhbm_handle_kick(void *sde_encoder_virt);
-int oplus_ofp_lhbm_handle(void *dsi_display);
 int oplus_ofp_cmd_post_wait(void *dsi_display_mode, void *dsi_cmd_desc, enum dsi_cmd_set_type type);
 int oplus_ofp_panel_hbm_status_update(void *sde_encoder_phys);
 int oplus_ofp_pressed_icon_status_update(void *sde_encoder_phys, unsigned int irq_type);
 void oplus_ofp_uiready_event_work_handler(struct work_struct *work_item);
-enum hrtimer_restart oplus_ofp_notify_uiready_timer_handler(struct hrtimer *timer);
 int oplus_ofp_notify_uiready(void *sde_encoder_phys);
-int oplus_ofp_lhbm_resend_uiready(void *dsi_display);
 bool oplus_ofp_backlight_filter(void *dsi_panel, unsigned int bl_level);
 bool oplus_ofp_need_pcc_change(void *s_crtc);
 int oplus_ofp_set_dspp_pcc_feature(void *sde_hw_cp_cfg, void *s_crtc, bool before_setup_pcc);
@@ -284,15 +261,12 @@ void oplus_ofp_wait_sometime_before_aod_off_handle(void *dsi_display);
 int oplus_ofp_aod_off_handle(void *dsi_display);
 void oplus_ofp_wait_te_before_aod_on(struct dsi_panel *panel);
 int oplus_ofp_power_mode_handle(void *dsi_display, int power_mode);
-int oplus_ofp_video_mode_aod_handle(void *sde_encoder_virt);
+int oplus_ofp_video_mode_aod_handle(void *dsi_display, void *dsi_display_mode);
 void oplus_ofp_aod_off_set_work_handler(struct work_struct *work_item);
 int oplus_ofp_touchpanel_event_notifier_call(struct notifier_block *nb, unsigned long action, void *data);
 int oplus_ofp_aod_off_hbm_on_delay_check(void *sde_encoder_phys);
 int oplus_ofp_aod_off_backlight_recovery(void *sde_encoder_virt);
 int oplus_ofp_ultra_low_power_aod_update(void *sde_encoder_virt);
-bool oplus_ofp_get_aod_state(void);
-void oplus_ofp_video_mode_refresh_flag_update(void *dsi_display_mode);
-int oplus_panel_parse_video_mode_aod_brightness_config(struct dsi_panel *panel);
 
 /* -------------------- node -------------------- */
 /* fp_type */

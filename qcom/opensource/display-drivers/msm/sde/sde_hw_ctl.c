@@ -73,12 +73,9 @@
 #define CTL_OUTPUT_FENCE_DIR_DATA       0x284
 #define CTL_OUTPUT_FENCE_DIR_MASK       0x288
 #define CTL_OUTPUT_FENCE_DIR_ATTR       0x28C
-#define CTL_FLUSH_SYNC                  0xA00
-#define CTL_FLUSH_SYNC_MODE             0xA04
 
 #define CTL_CESTA_FLUSH                 0x300
 #define CTL_CESTA_FLUSH_COMPLETE	0x340
-#define HYP_CTL_CESTA_RESERVE		0x144
 
 #define CTL_MIXER_BORDER_OUT            BIT(24)
 #define CTL_FLUSH_MASK_ROT              BIT(27)
@@ -88,7 +85,7 @@
 #define CTL_SSPP_MAX_RECTS		2
 
 #define SDE_REG_RESET_TIMEOUT_US        2000
-#define SDE_REG_WAIT_RESET_TIMEOUT_US        2000000
+#define SDE_REG_WAIT_RESET_TIMEOUT_US        100000
 
 #define UPDATE_MASK(m, idx, en)           \
 	((m) = (en) ? ((m) | BIT((idx))) : ((m) & ~BIT((idx))))
@@ -247,17 +244,17 @@ struct ctl_sspp_stage_reg_map {
 /* list of ctl_sspp_stage_reg_map for all the sppp */
 static const struct ctl_sspp_stage_reg_map
 sspp_reg_cfg_tbl[SSPP_MAX][CTL_SSPP_MAX_RECTS] = {
-	[SSPP_NONE] = { {0, 0, 0, 0}, {0, 0, 0, 0} },
-	[SSPP_VIG0] = { {0, 0, 3, BIT(0)}, {3, 0, 4, 0} },
-	[SSPP_VIG1] = { {0, 3, 3, BIT(2)}, {3, 4, 4, 0} },
-	[SSPP_VIG2] = { {0, 6, 3, BIT(4)}, {3, 8, 4, 0} },
-	[SSPP_VIG3] = { {0, 26, 3, BIT(6)}, {3, 12, 4, 0} },
-	[SSPP_DMA0] = { {0, 18, 3, BIT(16)}, {2, 8, 4, 0} },
-	[SSPP_DMA1] = { {0, 21, 3, BIT(18)}, {2, 12, 4, 0} },
-	[SSPP_DMA2] = { {2, 0, 4, 0}, {2, 16, 4, 0} },
-	[SSPP_DMA3] = { {2, 4, 4, 0}, {2, 20, 4, 0} },
-	[SSPP_DMA4] = { {4, 0, 4, 0}, {4, 8, 4, 0} },
-	[SSPP_DMA5] = { {4, 4, 4, 0}, {4, 12, 4, 0} },
+	/* SSPP_NONE */{ {0, 0, 0, 0}, {0, 0, 0, 0} },
+	/* SSPP_VIG0 */{ {0, 0, 3, BIT(0)}, {3, 0, 4, 0} },
+	/* SSPP_VIG1 */{ {0, 3, 3, BIT(2)}, {3, 4, 4, 0} },
+	/* SSPP_VIG2 */{ {0, 6, 3, BIT(4)}, {3, 8, 4, 0} },
+	/* SSPP_VIG3 */{ {0, 26, 3, BIT(6)}, {3, 12, 4, 0} },
+	/* SSPP_DMA0 */{ {0, 18, 3, BIT(16)}, {2, 8, 4, 0} },
+	/* SSPP_DMA1 */{ {0, 21, 3, BIT(18)}, {2, 12, 4, 0} },
+	/* SSPP_DMA2 */{ {2, 0, 4, 0}, {2, 16, 4, 0} },
+	/* SSPP_DMA3 */{ {2, 4, 4, 0}, {2, 20, 4, 0} },
+	/* SSPP_DMA4 */{ {4, 0, 4, 0}, {4, 8, 4, 0} },
+	/* SSPP_DMA5 */{ {4, 4, 4, 0}, {4, 12, 4, 0} },
 };
 
 /**
@@ -314,8 +311,7 @@ static const struct ctl_hw_flush_cfg
 static struct sde_ctl_cfg *_ctl_offset(enum sde_ctl ctl,
 		struct sde_mdss_cfg *m,
 		void __iomem *addr,
-		struct sde_hw_blk_reg_map *b,
-		struct sde_hw_blk_reg_map *ctl_hyp_b)
+		struct sde_hw_blk_reg_map *b)
 {
 	int i;
 
@@ -326,14 +322,6 @@ static struct sde_ctl_cfg *_ctl_offset(enum sde_ctl ctl,
 			b->length = m->ctl[i].len;
 			b->hw_rev = m->hw_rev;
 			b->log_mask = SDE_DBG_MASK_CTL;
-
-			if (m->ctl_hyp.base) {
-				ctl_hyp_b->base_off = addr;
-				ctl_hyp_b->blk_off = m->ctl_hyp.base;
-				ctl_hyp_b->length = m->ctl_hyp.len;
-				ctl_hyp_b->hw_rev = m->hw_rev;
-				ctl_hyp_b->log_mask = SDE_DBG_MASK_CTL;
-			}
 			return &m->ctl[i];
 		}
 	}
@@ -1518,58 +1506,6 @@ static int sde_hw_ctl_update_intf_cfg(struct sde_hw_ctl *ctx,
 	return 0;
 }
 
-static bool sde_hw_ctl_get_flush_sync_mode(struct sde_hw_ctl *ctx)
-{
-	struct sde_hw_blk_reg_map *c;
-	u32 enable, mode;
-
-	if (!ctx)
-		return false;
-
-	c = &ctx->hw;
-
-	mode = SDE_REG_READ(c, CTL_FLUSH_SYNC_MODE);
-	enable = (SDE_REG_READ(c, CTL_FLUSH_SYNC)) & BIT(0);
-
-	return (enable && !(mode & BIT(0)));
-}
-
-static void sde_hw_ctl_setup_flush_sync(struct sde_hw_ctl *ctx, bool is_master,
-		bool enable)
-{
-	struct sde_hw_blk_reg_map *c;
-	u32 config = 0;
-
-	if (!ctx)
-		return;
-
-	c = &ctx->hw;
-
-	config |= is_master ? 0 : BIT(1);
-	config |= enable ? (BIT(0) | BIT(2)) : 0;
-
-	SDE_REG_WRITE(c, CTL_FLUSH_SYNC, config);
-}
-
-static void sde_hw_ctl_enable_sync_mode(struct sde_hw_ctl *ctx, bool async_en)
-{
-	struct sde_hw_blk_reg_map *c;
-	u32 value = 0;
-
-	if (!ctx)
-		return;
-
-	c = &ctx->hw;
-	value = SDE_REG_READ(c, CTL_FLUSH_SYNC_MODE);
-
-	if (async_en)
-		value |= BIT(0);
-	else
-		value &= ~BIT(0);
-
-	SDE_REG_WRITE(c, CTL_FLUSH_SYNC_MODE, value);
-}
-
 static int sde_hw_ctl_intf_cfg(struct sde_hw_ctl *ctx,
 		struct sde_hw_intf_cfg *cfg)
 {
@@ -1739,39 +1675,8 @@ static void sde_hw_ctl_cesta_flush(struct sde_hw_ctl *ctx, struct sde_ctl_cesta_
 	}
 }
 
-static void sde_hw_hyp_ctl_reset_cesta_reserve(struct sde_hw_ctl *ctx, u32 ctl_count)
-{
-	struct sde_hw_blk_reg_map *c;
-	int i = 0;
-
-	if (!ctx) {
-		SDE_ERROR("invalid params\n");
-		return;
-	}
-
-	c = &ctx->ctl_hyp_hw;
-
-	for (i = 0; i < ctl_count; i++)
-		SDE_REG_WRITE(c, HYP_CTL_CESTA_RESERVE + (i * 0x80), 0x0);
-
-}
-
-static void sde_hw_hyp_ctl_cesta_reserve(struct sde_hw_ctl *ctx, u32 scc_index)
-{
-	struct sde_hw_blk_reg_map *c;
-	u32 ctl_idx = 0;
-
-	if (!ctx)
-		return;
-
-	c = &ctx->ctl_hyp_hw;
-	ctl_idx = ctx->idx - CTL_0;
-
-	SDE_REG_WRITE(c, HYP_CTL_CESTA_RESERVE + (ctl_idx * 0x80), (BIT(scc_index) & 0xff));
-}
-
 static void _setup_ctl_ops(struct sde_hw_ctl_ops *ops,
-		unsigned long cap, unsigned long mdss_cap)
+		unsigned long cap)
 {
 	if (cap & BIT(SDE_CTL_ACTIVE_CFG)) {
 		ops->update_pending_flush =
@@ -1827,9 +1732,7 @@ static void _setup_ctl_ops(struct sde_hw_ctl_ops *ops,
 	}
 	ops->update_bitmask_sspp = sde_hw_ctl_update_bitmask_sspp;
 	ops->update_bitmask_mixer = sde_hw_ctl_update_bitmask_mixer;
-	if  (cap & BIT(SDE_CTL_REG_DMA))
-		ops->reg_dma_flush = sde_hw_reg_dma_flush;
-
+	ops->reg_dma_flush = sde_hw_reg_dma_flush;
 	ops->get_start_state = sde_hw_ctl_get_start_state;
 
 	if (cap & BIT(SDE_CTL_CESTA_FLUSH))
@@ -1864,23 +1767,12 @@ static void _setup_ctl_ops(struct sde_hw_ctl_ops *ops,
 
 	if (cap & BIT(SDE_CTL_UIDLE))
 		ops->uidle_enable = sde_hw_ctl_uidle_enable;
-
-	if (mdss_cap & BIT(SDE_MDP_HW_FLUSH_SYNC)) {
-		ops->setup_flush_sync = sde_hw_ctl_setup_flush_sync;
-		ops->enable_sync_mode = sde_hw_ctl_enable_sync_mode;
-		ops->get_flush_sync_mode = sde_hw_ctl_get_flush_sync_mode;
-	}
-
-	if (cap & BIT(SDE_CTL_HYP_CTL_RESERVE)) {
-		ops->cesta_scc_reserve = sde_hw_hyp_ctl_cesta_reserve;
-		ops->reset_cesta_reserve = sde_hw_hyp_ctl_reset_cesta_reserve;
-	}
 }
 
 struct sde_hw_blk_reg_map *sde_hw_ctl_init(enum sde_ctl idx,
 		void __iomem *addr,
 		struct sde_mdss_cfg *m,
-		u32 dpu_idx, struct sde_hw_ctl **hw_ctl_0)
+		u32 dpu_idx)
 {
 	struct sde_hw_ctl *c;
 	struct sde_ctl_cfg *cfg;
@@ -1889,7 +1781,7 @@ struct sde_hw_blk_reg_map *sde_hw_ctl_init(enum sde_ctl idx,
 	if (!c)
 		return ERR_PTR(-ENOMEM);
 
-	cfg = _ctl_offset(idx, m, addr, &c->hw, &c->ctl_hyp_hw);
+	cfg = _ctl_offset(idx, m, addr, &c->hw);
 	if (IS_ERR_OR_NULL(cfg)) {
 		kfree(c);
 		pr_err("failed to create sde_hw_ctl %d\n", idx);
@@ -1897,9 +1789,7 @@ struct sde_hw_blk_reg_map *sde_hw_ctl_init(enum sde_ctl idx,
 	}
 
 	c->caps = cfg;
-
-	_setup_ctl_ops(&c->ops, c->caps->features, m->mdp[0].features);
-
+	_setup_ctl_ops(&c->ops, c->caps->features);
 	c->idx = idx;
 	c->mixer_count = m->mixer_count;
 	c->mixer_hw_caps = m->mixer;
@@ -1907,13 +1797,6 @@ struct sde_hw_blk_reg_map *sde_hw_ctl_init(enum sde_ctl idx,
 
 	sde_dbg_reg_register_dump_range(SDE_DBG_NAME, cfg->name, c->hw.blk_off,
 			c->hw.blk_off + c->hw.length, c->hw.xin_id);
-
-	if (c->idx == CTL_0 && c->ctl_hyp_hw.blk_off) {
-		sde_dbg_reg_register_dump_range(SDE_DBG_NAME, m->ctl_hyp.name,
-			c->ctl_hyp_hw.blk_off, c->ctl_hyp_hw.blk_off + c->ctl_hyp_hw.length,
-			c->ctl_hyp_hw.xin_id);
-		*hw_ctl_0 = c;
-	}
 
 	return &c->hw;
 }

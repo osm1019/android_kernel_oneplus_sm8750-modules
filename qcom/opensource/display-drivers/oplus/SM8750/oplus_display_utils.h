@@ -30,11 +30,6 @@ enum oplus_display_support_list {
 	OPLUS_DISPLAY_UNKNOW,
 };
 
-enum oplus_panel_regs_check_flag {
-	OPLUS_REGS_CHECK_ENABLE = BIT(0),
-	OPLUS_REGS_CHECK_PAGE_SWITCH = BIT(1),
-};
-
 enum oplus_display_dre_status {
 	OPLUS_DISPLAY_DRE_OFF = 0,
 	OPLUS_DISPLAY_DRE_ON,
@@ -99,21 +94,6 @@ int oplus_event_data_notifier_trigger(
  * Return: Zero on Success
  */
 int oplus_panel_backlight_notifier(struct dsi_panel *panel, u32 bl_lvl);
-
-/**
- * oplus_dsi_panel_parse_mipi_err() - parse mipi err check config
- */
-int oplus_dsi_panel_parse_mipi_err(struct dsi_panel *panel);
-int oplus_dsi_panel_parse_pcd(struct dsi_panel *panel);
-int oplus_dsi_panel_parse_lvd(struct dsi_panel *panel);
-/**
- * oplus_panel_mipi_err_check() - mipi err reg and return buf to match check
- */
-int oplus_panel_mipi_err_check(struct dsi_panel *panel);
-int oplus_panel_pcd_check(struct dsi_panel *panel);
-int oplus_panel_lvd_check(struct dsi_panel *panel);
-int oplus_panel_pl_check_state(struct dsi_panel *panel);
-void oplus_panel_pl_check_enable(struct dsi_panel *panel);
 
 int oplus_display_panel_gamma_compensation(struct dsi_display *display);
 

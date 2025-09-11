@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -724,7 +724,6 @@ static unsigned long dsi_pll_vco_recalc_rate(struct dsi_pll_resource *pll)
 
 	vco_rate = div_u64(pll_freq, pll_post_div);
 
-	pll->vco_rate = vco_rate;
 	return vco_rate;
 }
 
@@ -765,7 +764,6 @@ static unsigned long dsi_pll_byteclk_recalc_rate(struct clk_hw *hw, unsigned lon
 	else
 		byte_rate = div_u64(byte_rate, 7);
 
-	pll->byteclk_rate = byte_rate;
 	return byte_rate;
 }
 
@@ -813,7 +811,6 @@ static unsigned long dsi_pll_pclk_recalc_rate(struct clk_hw *hw, unsigned long p
 	pclk_div = dsi_pll_get_pclk_div(pll);
 	pclk_rate = div_u64(pclk_rate, pclk_div);
 
-	pll->pclk_rate = pclk_rate;
 	return pclk_rate;
 }
 
@@ -1660,9 +1657,9 @@ int dsi_pll_3nm_configure(void *pll, bool commit)
 	dsi_pll_init_val(rsc);
 
 	rc = dsi_pll_3nm_set_byteclk_div(rsc, commit);
-	rc = dsi_pll_3nm_set_pclk_div(rsc, commit);
 
 	if (commit) {
+		rc = dsi_pll_3nm_set_pclk_div(rsc, commit);
 		rc = dsi_pll_3nm_vco_set_rate(rsc);
 	} else {
 		rc = dsi_pll_3nm_dynamic_clk_vco_set_rate(rsc);

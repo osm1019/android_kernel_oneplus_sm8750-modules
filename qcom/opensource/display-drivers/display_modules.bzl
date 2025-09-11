@@ -32,7 +32,6 @@ module_entry(
             "msm/dp/dp_catalog_v500.c",
             "msm/dp/dp_aux.c",
             "msm/dp/dp_panel.c",
-            "msm/dp/dp_panel_tu.c",
             "msm/dp/dp_link.c",
             "msm/dp/dp_ctrl.c",
             "msm/dp/dp_audio.c",
@@ -114,7 +113,6 @@ module_entry(
             "msm/sde/sde_color_processing_aiqe.c",
             "msm/sde/sde_hw_color_proc_aiqe_v1.c",
             "msm/sde/sde_aiqe_common.c",
-            "msm/sde/sde_loopback.c",
          ],
          "CONFIG_DRM_SDE_WB" : [
             "msm/sde/sde_wb.c",
@@ -207,7 +205,6 @@ module_entry(
              "oplus/SM8750/oplus_display_panel_cmd.c",
              "oplus/SM8750/oplus_display_ext.c",
              "oplus/SM8750/oplus_display_esd.c",
-             "oplus/SM8750/oplus_bl_ic_ktz8868.c",
          ],
          "OPLUS_FEATURE_DISPLAY_ADFR" : [
              "oplus/SM8750/oplus_adfr.c",
@@ -219,17 +216,9 @@ module_entry(
              "oplus/SM8750/oplus_onscreenfingerprint.c",
          ],
 #endif /* OPLUS_FEATURE_DISPLAY */
-#ifdef OPLUS_FEATURE_TP_BASIC
-         "OPLUS_FEATURE_TP_BASIC" : [
-             "oplus/SM8750/oplus_display_notify_tp.c",
-         ],
-#endif /* OPLUS_FEATURE_TP_BASIC */
       },
       deps = [
          "//vendor/qcom/opensource/mm-drivers:mm_drivers_headers",
-#ifdef OPLUS_FEATURE_DISPLAY
-         "//vendor/oplus/kernel/device_info/oplus_fpga:oplus_bsp_fpga_monitor",
-#endif /* OPLUS_FEATURE_DISPLAY */
       ],
 
       # Configs are handled by config_options = []
@@ -250,10 +239,6 @@ module_entry(
         ],
         "CONFIG_MSM_MMRM" : [
             "//vendor/qcom/opensource/mmrm-driver:%b_mmrm_driver",
-        ],
-        "CONFIG_SMMU_PROXY" : [
-            "//vendor/qcom/opensource/securemsm-kernel:%b_smmu_proxy_dlkm",
-             "//vendor/qcom/opensource/securemsm-kernel:smmu_proxy_headers",
         ],
       },
 )

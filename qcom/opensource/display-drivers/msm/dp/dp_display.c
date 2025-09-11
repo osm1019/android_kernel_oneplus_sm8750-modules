@@ -34,6 +34,13 @@
 #include "dp_pll.h"
 #include "sde_dbg.h"
 
+#ifdef OPLUS_FEATURE_DISPLAY
+#include <soc/oplus/system/oplus_project.h>
+extern unsigned int is_project(int project);
+#define OPLUS_DP_CONTROL_GPIO 186
+#define SM8750_AP_GPIO_OFFSET 512
+#endif /* OPLUS_FEATURE_DISPLAY */
+
 #define DRM_DP_IPC_NUM_PAGES 10
 #define DP_MST_DEBUG(fmt, ...) DP_DEBUG(fmt, ##__VA_ARGS__)
 
@@ -2125,17 +2132,6 @@ static void dp_display_disconnect_work(struct work_struct *work)
 	struct dp_display_private *dp = container_of(work,
 			struct dp_display_private, disconnect_work);
 
-	/*
-	 * In DP simulation mode, DP link clock's parent is driven
-	 * by usb pll clock, in case usb is disconnected during
-	 * DP simulation. Accessing HW registers driven by DP link clock
-	 * during this would trigger an exception. Hence, put xo clock as
-	 * DP link clock's parent to keep the registers driven by
-	 * link clock still be accessible.
-	 */
-	if (dp->debug->sim_mode && dp_display_state_is(DP_STATE_ABORTED))
-		dp->power->park_clocks(dp->power);
-
 	dp_display_handle_disconnect(dp, false);
 
 	if (dp->debug->sim_mode && dp_display_state_is(DP_STATE_ABORTED))
@@ -2156,6 +2152,8 @@ static int dp_display_usb_notifier(struct notifier_block *nb,
 		dp_display_state_add(DP_STATE_ABORTED);
 		dp->ctrl->abort(dp->ctrl, true);
 		dp->aux->abort(dp->aux, true);
+
+		dp->power->park_clocks(dp->power);
 
 		queue_work(dp->wq, &dp->disconnect_work);
 	}
@@ -3148,11 +3146,12 @@ static int dp_display_validate_link_clock(struct dp_display_private *dp,
 }
 
 static int dp_display_validate_pixel_clock(struct dp_display_mode dp_mode,
-		u32 max_pclk_khz, u32 pclk_factor)
+		u32 max_pclk_khz)
 {
-	u32 pclk_khz = dp_mode.timing.pixel_clk_khz;
+	u32 pclk_khz = dp_mode.timing.widebus_en ?
+		(dp_mode.timing.pixel_clk_khz >> 1) :
+		dp_mode.timing.pixel_clk_khz;
 
-	pclk_khz = pclk_khz / pclk_factor;
 	if (pclk_khz > max_pclk_khz) {
 		DP_DEBUG("clk: %d kHz, max: %d kHz\n", pclk_khz, max_pclk_khz);
 		return -EPERM;
@@ -3293,8 +3292,7 @@ static enum drm_mode_status dp_display_validate_mode(
 	if (rc)
 		goto end;
 
-	rc = dp_display_validate_pixel_clock(dp_mode, dp_display->max_pclk_khz,
-			dp_panel->pclk_factor);
+	rc = dp_display_validate_pixel_clock(dp_mode, dp_display->max_pclk_khz);
 	if (rc)
 		goto end;
 

@@ -816,7 +816,7 @@ static inline int dsi_phy_get_data_lanes_count(struct msm_dsi_phy *phy)
 	int num_of_lanes = 0;
 	enum dsi_data_lanes dlanes;
 
-	dlanes = phy->cfg.data_lanes;
+	dlanes = phy->data_lanes;
 
 	/**
 	  * For split link use case effective data lines need to be used
@@ -1041,8 +1041,8 @@ int dsi_phy_enable(struct msm_dsi_phy *phy,
 
 	memcpy(&phy->mode, &config->video_timing, sizeof(phy->mode));
 	memcpy(&phy->cfg.lane_map, &config->lane_map, sizeof(config->lane_map));
+	phy->data_lanes = config->common_config.data_lanes;
 	phy->dst_format = config->common_config.dst_format;
-	phy->cfg.data_lanes = config->common_config.data_lanes;
 	phy->cfg.pll_source = pll_source;
 	phy->cfg.bit_clk_rate_hz = config->bit_clk_rate_hz;
 
@@ -1372,7 +1372,7 @@ void dsi_phy_dynamic_refresh_trigger_sel(struct msm_dsi_phy *phy,
  * @phy:	DSI PHY handle
  * @is_master:	Boolean to indicate if for master or slave.
  */
-void dsi_phy_dynamic_refresh_trigger(struct msm_dsi_phy *phy, bool is_master, bool prog_dr)
+void dsi_phy_dynamic_refresh_trigger(struct msm_dsi_phy *phy, bool is_master)
 {
 	u32 off;
 
@@ -1384,15 +1384,11 @@ void dsi_phy_dynamic_refresh_trigger(struct msm_dsi_phy *phy, bool is_master, bo
 	 * program PLL_SWI_INTF_SEL and SW_TRIGGER bit only for
 	 * master and program SYNC_MODE bit only for slave.
 	 */
-	if (is_master) {
+	if (is_master)
 		off = BIT(DYN_REFRESH_INTF_SEL) | BIT(DYN_REFRESH_SWI_CTRL) |
 			BIT(DYN_REFRESH_SW_TRIGGER);
-
-		if (prog_dr)
-			off |= BIT(DYN_REFRESH_PROG_DR);
-	} else {
+	else
 		off = BIT(DYN_REFRESH_SYNC_MODE) | BIT(DYN_REFRESH_SWI_CTRL);
-	}
 
 	if (phy->hw.ops.dyn_refresh_ops.dyn_refresh_helper)
 		phy->hw.ops.dyn_refresh_ops.dyn_refresh_helper(&phy->hw, off);

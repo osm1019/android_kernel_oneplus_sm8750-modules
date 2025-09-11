@@ -36,7 +36,6 @@
 #define OPLUS_ADFR_CONFIG_HIGH_PRECISION_OA_MODE             (BIT(10))
 #define OPLUS_ADFR_CONFIG_HIGH_PRECISION_SWITCH              (BIT(11))
 #define OPLUS_ADFR_CONFIG_DECREASING_STEP                    (BIT(12))
-#define OPLUS_ADFR_CONFIG_PWMMINFPS_BYMODE                   (BIT(13))
 
 /* get config value */
 #define OPLUS_ADFR_GET_GLOBAL_CONFIG(config)                 ((config) & OPLUS_ADFR_CONFIG_GLOBAL)
@@ -49,7 +48,6 @@
 #define ADFR_GET_HIGH_PRECISION_OA_MODE_CONFIG(config)       ((config) & OPLUS_ADFR_CONFIG_HIGH_PRECISION_OA_MODE)
 #define ADFR_GET_HIGH_PRECISION_SWITCH_CONFIG(config)        ((config) & OPLUS_ADFR_CONFIG_HIGH_PRECISION_SWITCH)
 #define OPLUS_ADFR_GET_DECREASING_STEP_CONFIG(config)        ((config) & OPLUS_ADFR_CONFIG_DECREASING_STEP)
-#define OPLUS_ADFR_GET_PWMMINFPS_BYMODE(config)              ((config) & OPLUS_ADFR_CONFIG_PWMMINFPS_BYMODE)
 
 /* SA property value */
 #define OPLUS_ADFR_SA_MAGIC                                  0x00800000
@@ -73,7 +71,6 @@ unsigned int oplus_adfr_display_id = OPLUS_ADFR_PRIMARY_DISPLAY;
 EXPORT_SYMBOL(oplus_adfr_display_id);
 /* adfr global structure */
 static struct oplus_adfr_params g_oplus_adfr_params[2] = {0};
-unsigned int global_test_te_config = 0;
 
 /* -------------------- extern -------------------- */
 /* extern params */
@@ -226,10 +223,6 @@ int oplus_adfr_init(void *dsi_panel)
 			p_oplus_adfr_params->osync_mode_timer.function = oplus_adfr_osync_mode_timer_handler;
 		}
 	}
-
-	/* oplus,adfr-oa-use-fixed-te */
-	p_oplus_adfr_params->oa_use_fixed_te = utils->read_bool(utils->data, "oplus,adfr-oa-use-fixed-te");
-	ADFR_INFO("oa use fixed te: %d\n", p_oplus_adfr_params->oa_use_fixed_te);
 
 	ADFR_INFO("oplus_adfr_config:0x%x\n", p_oplus_adfr_params->config);
 	OPLUS_ADFR_TRACE_INT("oplus_adfr_config", p_oplus_adfr_params->config);
@@ -444,80 +437,6 @@ static bool oplus_adfr_decreasing_step_is_enabled(void *oplus_adfr_params)
 	}
 
 	return (bool)(OPLUS_ADFR_GET_DECREASING_STEP_CONFIG(p_oplus_adfr_params->config));
-}
-
-static bool oplus_adfr_pwmminfps_bymode_is_enabled(void *oplus_adfr_params)
-{
-	struct oplus_adfr_params *p_oplus_adfr_params = oplus_adfr_params;
-
-	if (!p_oplus_adfr_params) {
-		ADFR_ERR("invalid p_oplus_adfr_params param\n");
-		return false;
-	}
-
-	if (!oplus_adfr_is_supported(p_oplus_adfr_params)) {
-		ADFR_DEBUG("adfr is not supported, pwmminfps_bymode is also not supported\n");
-		return false;
-	}
-
-	return (bool)(OPLUS_ADFR_GET_PWMMINFPS_BYMODE(p_oplus_adfr_params->config));
-}
-
-bool oplus_adfr_is_oa_use_fixed_te(void *sde_encoder_phys)
-{
-	struct sde_encoder_phys *phys_enc = sde_encoder_phys;
-	struct sde_connector *c_conn = NULL;
-	struct dsi_display *display = NULL;
-	struct oplus_adfr_params *p_oplus_adfr_params = NULL;
-
-	if (!phys_enc || !phys_enc->connector) {
-		ADFR_ERR("invalid phys_enc params\n");
-		return false;
-	}
-
-	c_conn = to_sde_connector(phys_enc->connector);
-	if (!c_conn) {
-		ADFR_ERR("invalid c_conn param\n");
-		return false;
-	}
-
-	display = c_conn->display;
-	if (!display || !display->panel) {
-		ADFR_ERR("invalid display params\n");
-		return false;
-	}
-
-	p_oplus_adfr_params = oplus_adfr_get_params(display->panel);
-	if (!p_oplus_adfr_params) {
-		ADFR_ERR("invalid p_oplus_adfr_params param\n");
-		return false;
-	}
-
-	return (bool)(p_oplus_adfr_params->oa_use_fixed_te);
-}
-
-bool oplus_adfr_is_oa_use_fixed_te_c(void *sde_connector) {
-	struct dsi_display *display = NULL;
-	struct oplus_adfr_params *p_oplus_adfr_params = NULL;
-	struct sde_connector *c_conn = sde_connector;
-	if (!c_conn) {
-		ADFR_ERR("invalid c_conn param\n");
-		return false;
-	}
-
-	display = c_conn->display;
-	if (!display || !display->panel) {
-		ADFR_ERR("invalid display params\n");
-		return false;
-	}
-
-	p_oplus_adfr_params = oplus_adfr_get_params(display->panel);
-	if (!p_oplus_adfr_params) {
-		ADFR_ERR("invalid p_oplus_adfr_params param\n");
-		return false;
-	}
-
-	return (bool)(p_oplus_adfr_params->oa_use_fixed_te);
 }
 
 /* -------------------- standard adfr -------------------- */
@@ -1486,39 +1405,20 @@ static int oplus_adfr_min_fps_update(void *dsi_display, unsigned int min_fps)
 	}
 
 	/* send the commands to set min fps */
-	if (oplus_adfr_pwmminfps_bymode_is_enabled(p_oplus_adfr_params)) {
-		if (oplus_panel_pwm_get_switch_state(display->panel) == PWM_SWITCH_MODE0) {
-			rc = oplus_adfr_display_cmd_set(display, DSI_CMD_ADFR_MIN_FPS_0 + i);
-			if (rc) {
-				ADFR_ERR("[%s] failed to send DSI_CMD_ADFR_MIN_FPS_%d cmds, rc=%d\n", display->name, i, rc);
-			}
-		} else if (oplus_panel_pwm_get_switch_state(display->panel) == PWM_SWITCH_MODE1) {
-			rc = oplus_adfr_display_cmd_set(display, DSI_CMD_HPWM_ADFR_MIN_FPS_0 + i);
-			if (rc) {
-				ADFR_ERR("[%s] failed to send DSI_CMD_HPWM_ADFR_MIN_FPS_%d cmds, rc=%d\n", display->name, i, rc);
-			}
-		} else {
-			rc = oplus_adfr_display_cmd_set(display, DSI_CMD_BIGDC_ADFR_MIN_FPS_0 + i);
-			if (rc) {
-				ADFR_ERR("[%s] failed to send DSI_CMD_BIGDC_ADFR_MIN_FPS_%d cmds, rc=%d\n", display->name, i, rc);
-			}
+	if (oplus_panel_pwm_get_state(display->panel) == PWM_STATE_L1) {
+		rc = oplus_adfr_display_cmd_set(display, DSI_CMD_BIGDC_ADFR_MIN_FPS_0 + i);
+		if (rc) {
+			ADFR_ERR("[%s] failed to send DSI_CMD_BIGDC_ADFR_MIN_FPS_%d cmds, rc=%d\n", display->name, i, rc);
+		}
+	} else if (oplus_panel_pwm_get_state(display->panel) == PWM_STATE_L3) {
+		rc = oplus_adfr_display_cmd_set(display, DSI_CMD_HPWM_ADFR_MIN_FPS_0 + i);
+		if (rc) {
+			ADFR_ERR("[%s] failed to send DSI_CMD_HPWM_ADFR_MIN_FPS_%d cmds, rc=%d\n", display->name, i, rc);
 		}
 	} else {
-		if (oplus_panel_pwm_get_state(display->panel) == PWM_STATE_L1) {
-			rc = oplus_adfr_display_cmd_set(display, DSI_CMD_BIGDC_ADFR_MIN_FPS_0 + i);
-			if (rc) {
-				ADFR_ERR("[%s] failed to send DSI_CMD_BIGDC_ADFR_MIN_FPS_%d cmds, rc=%d\n", display->name, i, rc);
-			}
-		} else if (oplus_panel_pwm_get_state(display->panel) == PWM_STATE_L3) {
-			rc = oplus_adfr_display_cmd_set(display, DSI_CMD_HPWM_ADFR_MIN_FPS_0 + i);
-			if (rc) {
-				ADFR_ERR("[%s] failed to send DSI_CMD_HPWM_ADFR_MIN_FPS_%d cmds, rc=%d\n", display->name, i, rc);
-			}
-		} else {
-			rc = oplus_adfr_display_cmd_set(display, DSI_CMD_ADFR_MIN_FPS_0 + i);
-			if (rc) {
-				ADFR_ERR("[%s] failed to send DSI_CMD_ADFR_MIN_FPS_%d cmds, rc=%d\n", display->name, i, rc);
-			}
+		rc = oplus_adfr_display_cmd_set(display, DSI_CMD_ADFR_MIN_FPS_0 + i);
+		if (rc) {
+			ADFR_ERR("[%s] failed to send DSI_CMD_ADFR_MIN_FPS_%d cmds, rc=%d\n", display->name, i, rc);
 		}
 	}
 
@@ -1807,14 +1707,6 @@ int oplus_adfr_status_reset(void *dsi_panel)
 			OPLUS_ADFR_TRACE_INT("oplus_adfr_oa_high_precision_fps", p_oplus_adfr_params->oa_high_precision_fps);
 		}
 		OPLUS_ADFR_TRACE_INT("oplus_adfr_auto_mode_cmd", OPLUS_ADFR_AUTO_OFF);
-	}
-
-	if (global_test_te_config != p_oplus_adfr_params->test_te.config) {
-		if (oplus_adfr_set_test_te(&global_test_te_config)) {
-			ADFR_INFO("sync test te config failed when display switch");
-		} else {
-			ADFR_INFO("sync test te config successfully when display switch");
-		}
 	}
 
 	/* update sa and osync para when timing switch or panel enable for debug */
@@ -4384,7 +4276,6 @@ int oplus_adfr_set_test_te(void *buf)
 	OPLUS_ADFR_TRACE_BEGIN("oplus_adfr_set_test_te");
 
 	p_oplus_adfr_params->test_te.config = *test_te_config;
-	global_test_te_config = p_oplus_adfr_params->test_te.config;
 	ADFR_INFO("oplus_adfr_test_te_config:%u\n", p_oplus_adfr_params->test_te.config);
 	OPLUS_ADFR_TRACE_INT("oplus_adfr_test_te_config", p_oplus_adfr_params->test_te.config);
 
@@ -4502,7 +4393,6 @@ ssize_t oplus_adfr_set_test_te_attr(struct kobject *obj,
 	sscanf(buf, "%u", &test_te_config);
 
 	p_oplus_adfr_params->test_te.config = test_te_config;
-	global_test_te_config = p_oplus_adfr_params->test_te.config;
 	ADFR_INFO("oplus_adfr_test_te_config:%u\n", p_oplus_adfr_params->test_te.config);
 	OPLUS_ADFR_TRACE_INT("oplus_adfr_test_te_config", p_oplus_adfr_params->test_te.config);
 

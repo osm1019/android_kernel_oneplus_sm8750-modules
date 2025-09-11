@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -33,12 +33,7 @@
 #include <soc/oplus/system/oplus_project.h>
 #include "oplus_display_pwm.h"
 #include "oplus_display_power.h"
-#include "oplus_bl_ic_ktz8868.h"
 #endif /* OPLUS_FEATURE_DISPLAY */
-
-#ifdef OPLUS_FEATURE_TP_BASIC
-#include "oplus_display_notify_tp.h"
-#endif /* OPLUS_FEATURE_TP_BASIC */
 
 #ifdef OPLUS_FEATURE_DISPLAY_ADFR
 #include "oplus_adfr.h"
@@ -487,26 +482,12 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 		return rc;
 	}
 
-#ifdef OPLUS_FEATURE_TP_BASIC
-	if (oplus_display_notify_tp_ops.tp_panel_power_off_cs_off) {
-		oplus_display_notify_tp_ops.tp_panel_power_off_cs_off(panel);
-	}
-#endif /* OPLUS_FEATURE_TP_BASIC */
-
 	if (gpio_is_valid(panel->reset_config.disp_en_gpio))
 		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
 
 	if (gpio_is_valid(panel->reset_config.reset_gpio) &&
 					!panel->reset_gpio_always_on)
-#ifdef OPLUS_FEATURE_TP_BASIC
-	{
-		if (oplus_display_notify_tp_ops.tp_panel_power_off_rst) {
-			oplus_display_notify_tp_ops.tp_panel_power_off_rst(panel);
-		}
-	}
-#else /* OPLUS_FEATURE_TP_BASIC */
 		gpio_set_value(panel->reset_config.reset_gpio, 0);
-#endif /* OPLUS_FEATURE_TP_BASIC */
 
 	if (gpio_is_valid(panel->reset_config.lcd_mode_sel_gpio))
 		gpio_set_value(panel->reset_config.lcd_mode_sel_gpio, 0);
@@ -845,13 +826,6 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 		rc = dsi_panel_update_backlight(panel, bl_lvl);
 		break;
 	case DSI_BACKLIGHT_EXTERNAL:
-#ifdef OPLUS_FEATURE_DISPLAY
-		/* add for ktz8866 backlight ctrl*/
-		if(panel->oplus_panel.bl_ic_ktz8868_used) {
-			rc = bl_ic_ktz8868_set_brightness(bl_lvl);
-}
-
-#endif /* OPLUS_FEATURE_DISPLAY */
 		break;
 	case DSI_BACKLIGHT_PWM:
 		rc = dsi_panel_update_pwm_backlight(panel, bl_lvl);
@@ -1612,17 +1586,11 @@ static int dsi_panel_parse_qsync_caps(struct dsi_panel *panel,
 	struct dsi_parser_utils *utils = &panel->utils;
 	const char *name = panel->name;
 
-	qsync_caps->hwfence_sw_override_always =
-		utils->read_bool(utils->data, "qcom,hwfence_sw_override_always");
-
 	qsync_caps->qsync_support = utils->read_bool(utils->data, "qcom,qsync-enable");
 	if (!qsync_caps->qsync_support) {
 		DSI_DEBUG("qsync feature not enabled\n");
 		goto error;
 	}
-
-	panel->vrr_caps.video_mrr_support =
-		utils->read_bool(utils->data, "qcom,video-mrr-enable");
 
 	/**
 	 * "mdss-dsi-qsync-min-refresh-rate" is defined in cmd mode and
@@ -1896,8 +1864,7 @@ static int dsi_panel_parse_vrr_caps(struct dsi_panel *panel,
 	}
 
 	if ((panel->vrr_caps.arp_support || panel->vrr_caps.video_psr_support) &&
-			panel->dfps_caps.dfps_support &&
-			!panel->vrr_caps.video_mrr_support) {
+			panel->dfps_caps.dfps_support) {
 		DSI_ERR("disabling dfps as it can't be supported with ARP/Video PSR\n");
 		panel->dfps_caps.dfps_support = false;
 	}
@@ -1917,7 +1884,7 @@ error:
 }
 
 static int dsi_panel_parse_dyn_clk_list(struct dsi_display_mode *mode,
-		struct dsi_parser_utils *utils, enum dsi_dyn_clk_feature_type type)
+		struct dsi_parser_utils *utils)
 {
 	int i, rc = 0;
 	struct msm_dyn_clk_list *bit_clk_list;
@@ -1963,27 +1930,8 @@ static int dsi_panel_parse_dyn_clk_list(struct dsi_display_mode *mode,
 		goto error;
 	}
 
-	if (type == DSI_DYN_CLK_TYPE_ADJUST_HFP) {
-		rc = utils->read_u32_array(utils->data, "qcom,dsi-dyn-clk-hfp-list",
-			bit_clk_list->front_porches, bit_clk_list->count);
-		if (rc) {
-			DSI_ERR("failed to parse hfp list values, rc = %d\n", rc);
-			goto error;
-		}
-	}
-
-	if (type == DSI_DYN_CLK_TYPE_ADJUST_VFP) {
-		rc = utils->read_u32_array(utils->data, "qcom,dsi-dyn-clk-vfp-list",
-			bit_clk_list->front_porches, bit_clk_list->count);
-		if (rc) {
-			DSI_ERR("failed to parse vfp list values, rc = %d\n", rc);
-			goto error;
-		}
-	}
-
 	for (i = 0; i < bit_clk_list->count; i++)
-		DSI_DEBUG("bit clk rate[%d]:%d, front porch[%d]:%d\n", i, bit_clk_list->rates[i],
-				i, bit_clk_list->front_porches[i]);
+		DSI_DEBUG("bit clk rate[%d]:%d\n", i, bit_clk_list->rates[i]);
 
 	return 0;
 
@@ -2026,42 +1974,12 @@ static int dsi_panel_parse_dyn_clk_caps(struct dsi_panel *panel)
 	} else if (!strcmp(type, "constant-fps-adjust-vfp")) {
 		dyn_clk_caps->type = DSI_DYN_CLK_TYPE_CONST_FPS_ADJUST_VFP;
 		dyn_clk_caps->maintain_const_fps = true;
-	} else if (!strcmp(type, "adjust-hfp")) {
-		dyn_clk_caps->type = DSI_DYN_CLK_TYPE_ADJUST_HFP;
-		dyn_clk_caps->maintain_const_fps = true;
-	} else if (!strcmp(type, "adjust-vfp")) {
-		dyn_clk_caps->type = DSI_DYN_CLK_TYPE_ADJUST_VFP;
-		dyn_clk_caps->maintain_const_fps = true;
 	} else {
 		dyn_clk_caps->type = DSI_DYN_CLK_TYPE_LEGACY;
 		dyn_clk_caps->maintain_const_fps = false;
 	}
 	DSI_DEBUG("Dynamic clock type is [%s]\n", type);
 	return 0;
-}
-
-static void dsi_panel_parse_dfps_porches(struct dsi_parser_utils *utils,
-	u32 **dfps_porch_list, const char *porch_type, u32 dfps_list_len) {
-	int rc = 0;
-
-	*dfps_porch_list = kcalloc(dfps_list_len, sizeof(u32), GFP_KERNEL);
-	if (!*dfps_porch_list) {
-		rc = -ENOMEM;
-		DSI_ERR("[%s] dfps porch list parse failed, rc = %d\n", porch_type, rc);
-	}
-
-	rc = utils->read_u32_array(utils->data, porch_type,
-			*dfps_porch_list, dfps_list_len);
-	if (rc) {
-		rc = -EINVAL;
-		DSI_ERR("[%s] dfps porch list parse failed, rc = %d\n", porch_type, rc);
-	}
-
-	DSI_INFO("[%s]: ", porch_type);
-	for (int i = 0; i < dfps_list_len; ++i)
-	{
-		DSI_INFO("[%d] ", (*dfps_porch_list)[i]);
-	}
 }
 
 static int dsi_panel_parse_dfps_caps(struct dsi_panel *panel)
@@ -2097,8 +2015,6 @@ static int dsi_panel_parse_dfps_caps(struct dsi_panel *panel)
 		dfps_caps->type = DSI_DFPS_IMMEDIATE_HFP;
 	} else if (!strcmp(type, "dfps_immediate_porch_mode_vfp")) {
 		dfps_caps->type = DSI_DFPS_IMMEDIATE_VFP;
-	} else if (!strcmp(type, "dfps_immediate_porch_mode_both_hv_porch")) {
-		dfps_caps->type = DSI_DFPS_IMMEDIATE_HV_P;
 	} else {
 		DSI_ERR("[%s] dfps type is not recognized\n", name);
 		rc = -EINVAL;
@@ -2129,22 +2045,6 @@ static int dsi_panel_parse_dfps_caps(struct dsi_panel *panel)
 		rc = -EINVAL;
 		goto error;
 	}
-
-	if (dfps_caps->type == DSI_DFPS_IMMEDIATE_HV_P) {
-		dsi_panel_parse_dfps_porches(utils, &dfps_caps->dfps_hfp_list, "qcom,dsi-dfps-hfp-list",
-			dfps_caps->dfps_list_len);
-		dsi_panel_parse_dfps_porches(utils, &dfps_caps->dfps_hbp_list, "qcom,dsi-dfps-hbp-list",
-			dfps_caps->dfps_list_len);
-		dsi_panel_parse_dfps_porches(utils, &dfps_caps->dfps_hpw_list, "qcom,dsi-dfps-hpw-list",
-			dfps_caps->dfps_list_len);
-		dsi_panel_parse_dfps_porches(utils, &dfps_caps->dfps_vbp_list, "qcom,dsi-dfps-vbp-list",
-			dfps_caps->dfps_list_len);
-		dsi_panel_parse_dfps_porches(utils, &dfps_caps->dfps_vfp_list, "qcom,dsi-dfps-vfp-list",
-			dfps_caps->dfps_list_len);
-		dsi_panel_parse_dfps_porches(utils, &dfps_caps->dfps_vpw_list, "qcom,dsi-dfps-vpw-list",
-			dfps_caps->dfps_list_len);
-	}
-
 	dfps_caps->dfps_support = true;
 
 	/* calculate max and min fps */
@@ -2446,14 +2346,10 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-freq-step-pattern3-command",
 	"qcom,mdss-dsi-freq-step-pattern4-command",
 	"qcom,mdss-dsi-freq-step-pattern5-command",
-	"qcom,mdss-dsi-freq-step-pattern6-command",
-	"qcom,mdss-dsi-freq-step-pattern7-command",
-	"qcom,mdss-dsi-freq-step-pattern8-command",
 	"qcom,mdss-dsi-sticky_still_en-command",
 	"qcom,mdss-dsi-sticky_still_disable-command",
 	"qcom,mdss-dsi-sticky_on_fly-command",
 	"qcom,mdss-dsi-trigger_self_refresh-command",
-	"qcom,mdss-dsi-fps-switch-command",
 };
 
 const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
@@ -2490,14 +2386,10 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-freq-step-pattern3-command-state",
 	"qcom,mdss-dsi-freq-step-pattern4-command-state",
 	"qcom,mdss-dsi-freq-step-pattern5-command-state",
-	"qcom,mdss-dsi-freq-step-pattern6-command-state",
-	"qcom,mdss-dsi-freq-step-pattern7-command-state",
-	"qcom,mdss-dsi-freq-step-pattern8-command-state",
 	"qcom,mdss-dsi-sticky_still_en-command-state",
 	"qcom,mdss-dsi-sticky_still_disable-command-state",
 	"qcom,mdss-dsi-sticky_on_fly-command-state",
 	"qcom,mdss-dsi-trigger_self_refresh-command-state",
-	"qcom,mdss-dsi-fps-switch-command-state",
 };
 #endif /* OPLUS_FEATURE_DISPLAY */
 
@@ -2604,15 +2496,9 @@ int dsi_panel_alloc_cmd_packets(struct dsi_panel_cmd_set *cmd,
 	return 0;
 }
 
-#ifdef OPLUS_FEATURE_DISPLAY
-int dsi_panel_parse_cmd_sets_sub(struct dsi_panel_cmd_set *cmd,
-					enum dsi_cmd_set_type type,
-					struct dsi_parser_utils *utils)
-#else
 static int dsi_panel_parse_cmd_sets_sub(struct dsi_panel_cmd_set *cmd,
 					enum dsi_cmd_set_type type,
 					struct dsi_parser_utils *utils)
-#endif /* OPLUS_FEATURE_DISPLAY */
 {
 	int rc = 0;
 	u32 length = 0;
@@ -3301,9 +3187,6 @@ static int dsi_panel_parse_phy_timing(struct dsi_display_mode *mode,
 				mode->timing.refresh_rate);
 		do_div(pixel_clk_khz, 1000);
 		mode->pixel_clk_khz = pixel_clk_khz;
-		DSI_INFO("h_total_dce=%llu, v_total=%u, refresh_rate=%u, pclk = %llu, h_total=%u \n",
-			dsi_h_total_dce(&mode->timing), DSI_V_TOTAL(&mode->timing),
-			mode->timing.refresh_rate, pixel_clk_khz, DSI_H_TOTAL(&mode->timing));
 	}
 
 	return rc;
@@ -3794,7 +3677,6 @@ static int dsi_panel_parse_topology(
 		goto parse_fail;
 	}
 
-parse_done:
 	if (!(priv_info->dsc_enabled || priv_info->vdc_enabled) !=
 			!topology[top_sel].num_enc) {
 		DSI_ERR("topology and compression info mismatch dsc:%d vdc:%d num_enc:%d\n",
@@ -3813,6 +3695,7 @@ parse_done:
 		topology[top_sel].num_enc,
 		topology[top_sel].num_intf);
 
+parse_done:
 	memcpy(&priv_info->topology, &topology[top_sel],
 		sizeof(struct msm_display_topology));
 parse_fail:
@@ -4410,8 +4293,8 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 	if (panel_physical_type && !strcmp(panel_physical_type, "oled"))
 		panel->panel_type = DSI_DISPLAY_PANEL_TYPE_OLED;
 
-	panel->disable_cesta_hw_sleep = true;
-	//utils->read_bool(utils->data,"qcom,mdss-disable-cesta-hw-sleep");
+	panel->disable_cesta_hw_sleep = utils->read_bool(utils->data,
+				"qcom,mdss-disable-cesta-hw-sleep");
 
 	rc = dsi_panel_parse_host_config(panel);
 	if (rc) {
@@ -5020,7 +4903,7 @@ int dsi_panel_get_mode(struct dsi_panel *panel,
 		}
 
 		if (panel->dyn_clk_caps.dyn_clk_support) {
-			rc = dsi_panel_parse_dyn_clk_list(mode, utils, panel->dyn_clk_caps.type);
+			rc = dsi_panel_parse_dyn_clk_list(mode, utils);
 			if (rc)
 				DSI_ERR("failed to parse dynamic clk rates, rc=%d\n", rc);
 		}
@@ -5104,84 +4987,6 @@ parse_fail:
 	return rc;
 }
 
-void dsi_panel_get_fps_switch_cmd(struct dsi_panel *panel,
-		struct dsi_display_mode *mode, u32 refresh_rate)
-{
-	struct device_node *fps_np, *timing_np, *child_np, *sub_child_np;
-	struct dsi_parser_utils *utils;
-	u32 fps = 0;
-	int rc = 0;
-	void *utils_data = NULL;
-	struct dsi_panel_cmd_set *set;
-	struct dsi_display_mode_priv_info *prv_info;
-
-	if (!panel || !mode) {
-		DSI_ERR("invalid params\n");
-		return;
-	}
-
-	mutex_lock(&panel->panel_lock);
-	utils = &panel->utils;
-	prv_info = mode->priv_info;
-	utils_data = utils->data;
-
-	timing_np = utils->get_child_by_name(utils->data,
-			 "qcom,mdss-dsi-display-timings");
-
-	if (!timing_np) {
-		DSI_ERR("no display timing_np nodes defined\n");
-		goto error;
-	}
-
-	dsi_for_each_child_node(timing_np, child_np) {
-		utils->data = child_np;
-		fps_np = utils->get_child_by_name(utils->data,
-				"qcom,mdss-dsi-dfps-commands");
-
-		if (!fps_np) {
-			DSI_DEBUG("no display fps nodes defined\n");
-			goto error;
-		}
-
-		dsi_for_each_child_node(fps_np, sub_child_np) {
-			utils->data = sub_child_np;
-			rc = utils->read_u32(utils->data, "qcom,dsi-fps-value", &fps);
-
-			if (rc) {
-				DSI_ERR("failed to read qcom,dsi-fps-value, rc=%d\n",
-						rc);
-				goto error;
-			}
-
-			if (fps != refresh_rate)
-				continue;
-
-			set = &prv_info->cmd_sets[DSI_CMD_SET_FPS_SWITCH];
-			rc = dsi_panel_parse_cmd_sets_sub(set,
-					DSI_CMD_SET_FPS_SWITCH, utils);
-
-			if (rc)
-				DSI_DEBUG("failed to parse fps switch command %d\n",
-					     rc);
-			/*
-			 * If suspend / resume happens after fps switch, on command of
-			 * default fps is sent which leads to flicker as fps switch command
-			 * is not part of on command. To avoid this, fps switch command is
-			 * sent as part of post panel on command.
-			 */
-			set = &prv_info->cmd_sets[DSI_CMD_SET_POST_ON];
-			rc = dsi_panel_parse_cmd_sets_sub(set, DSI_CMD_SET_POST_ON, utils);
-
-			if (rc)
-				DSI_DEBUG("failed to parse post panel on command %d\n", rc);
-		}
-	}
-
-error:
-	   utils->data = utils_data;
-	   mutex_unlock(&panel->panel_lock);
-}
-
 int dsi_panel_get_host_cfg_for_mode(struct dsi_panel *panel,
 				    struct dsi_display_mode *mode,
 				    struct dsi_host_config *config)
@@ -5217,7 +5022,7 @@ int dsi_panel_get_host_cfg_for_mode(struct dsi_panel *panel,
 
 	config->video_timing.vdc_enabled = mode->priv_info->vdc_enabled;
 	config->video_timing.vdc = &mode->priv_info->vdc;
-	config->esync_enabled = panel->esync_caps.esync_support;
+	config->video_timing.esync_enabled = panel->esync_caps.esync_support;
 
 	if (dyn_clk_caps->dyn_clk_support)
 		config->bit_clk_rate_hz_override = mode->timing.clk_rate_hz;
@@ -5653,8 +5458,6 @@ static int dsi_panel_prepare_cmd(struct dsi_panel *panel,
 		set->cmds[i].last_command = last_command;
 		if (!last_command || (i < (set->count - 1)))
 			set->cmds[i].msg.flags |= MIPI_DSI_MSG_BATCH_COMMAND;
-		else
-			set->cmds[i].msg.flags &= ~(MIPI_DSI_MSG_BATCH_COMMAND);
 	}
 
 	return 0;
@@ -5848,7 +5651,6 @@ int dsi_panel_switch(struct dsi_panel *panel)
 	if (oplus_display_ops.panel_switch_pre) {
 		oplus_display_ops.panel_switch_pre(panel);
 	}
-	panel->oplus_panel.is_switching = true;
 #endif /* OPLUS_FEATURE_DISPLAY */
 
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH, false);
@@ -6013,9 +5815,7 @@ int dsi_panel_disable(struct dsi_panel *panel)
 	}
 
 #ifdef OPLUS_FEATURE_DISPLAY
-	if (oplus_display_ops.panel_disable_pre) {
-		oplus_display_ops.panel_disable_pre(panel);
-	}
+	DSI_INFO("%s\n", __func__);
 #endif /* OPLUS_FEATURE_DISPLAY */
 
 	mutex_lock(&panel->panel_lock);

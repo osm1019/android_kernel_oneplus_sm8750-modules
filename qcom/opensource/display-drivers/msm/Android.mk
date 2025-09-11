@@ -4,17 +4,14 @@ LOCAL_PATH := $(call my-dir)
 LOCAL_MODULE_DDK_BUILD := true
 include $(CLEAR_VARS)
 
-BOARD_OPENSOURCE_DIR ?= vendor/qcom/opensource
-BOARD_COMMON_DIR ?= device/qcom/common
-
 # This makefile is only for DLKM
 ifneq ($(findstring vendor,$(LOCAL_PATH)),)
 
 ifneq ($(findstring opensource,$(LOCAL_PATH)),)
-	DISPLAY_BLD_DIR := $(TOP)/$(BOARD_OPENSOURCE_DIR)/display-drivers
+	DISPLAY_BLD_DIR := $(TOP)/vendor/qcom/opensource/display-drivers
 endif # opensource
 
-DLKM_DIR := $(TOP)/$(BOARD_COMMON_DIR)/dlkm
+DLKM_DIR := $(TOP)/device/qcom/common/dlkm
 
 LOCAL_ADDITIONAL_DEPENDENCIES := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
 
@@ -36,9 +33,6 @@ ifneq ($(call is-board-platform-in-list, taro monaco), true)
 	KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(PWD)/$(call intermediates-dir-for,DLKM,hw-fence-module-symvers)/Module.symvers
 	ifeq ($(CONFIG_HDCP_QSEECOM), y)
 	KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(PWD)/$(call intermediates-dir-for,DLKM,sec-module-symvers)/Module.symvers
-	endif
-	ifeq ($(CONFIG_SMMU_PROXY), y)
-	KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(PWD)/$(call intermediates-dir-for,DLKM,smmu-proxy-module-symvers)/Module.symvers
 	endif
 endif
 endif

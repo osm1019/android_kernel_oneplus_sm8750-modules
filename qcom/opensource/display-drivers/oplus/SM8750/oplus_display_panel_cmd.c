@@ -22,7 +22,6 @@
 
 extern u32 bl_lvl;
 extern struct panel_id panel_id;
-extern int panel_id_custom;
 
 const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-pre-on-command",
@@ -62,7 +61,6 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-sticky_still_disable-command",
 	"qcom,mdss-dsi-sticky_on_fly-command",
 	"qcom,mdss-dsi-trigger_self_refresh-command",
-	"qcom,mdss-dsi-fps-switch-command",
 #ifdef OPLUS_FEATURE_DISPLAY_ADFR
 	"qcom,mdss-dsi-adfr-auto-on-command",
 	"qcom,mdss-dsi-adfr-auto-off-command",
@@ -222,11 +220,10 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,dsi-panel-btb-switch-command",
 	"qcom,mdss-dsi-panel-info-switch-page-command",
 	"qcom,mdss-dsi-panel-init-command",
+	"qcom,mdss-dsi-optimize-command",
+	"qcom,mdss-dsi-optimize-split-command",
 	"qcom,mdss-dsi-optimize-on-command",
-	"qcom,mdss-dsi-optimize-vice-on-command",
-	"qcom,mdss-dsi-vid-144hz-switch-command",
 	"qcom,mdss-dsi-vid-120hz-switch-command",
-	"qcom,mdss-dsi-vid-90hz-switch-command",
 	"qcom,mdss-dsi-vid-60hz-switch-command",
 	"qcom,mdss-dsi-default-switch-page-command",
 	"qcom,mdss-dsi-skipframe-dbv-command",
@@ -253,16 +250,9 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-uir-loading-effect-2-command",
 	"qcom,mdss-dsi-uir-loading-effect-3-command",
 	"qcom,mdss-dsi-set-dc-on-command",
-	"qcom,mipi-err-check-page-command",
-	"oplus,dsi-panel-pcd-check-enter-command",
-	"oplus,dsi-panel-pcd-check-exit-command",
-	"oplus,dsi-panel-lvd-check-enter-command",
-	"oplus,dsi-panel-lvd-check-exit-command",
 	"oplus,dsi-panel-gamma-compensation-page0-command",
 	"oplus,dsi-panel-gamma-compensation-page1-command",
 	"oplus,dsi-panel-gamma-compensation-command",
-	"oplus,dsi-panel-white-point-compensation-off",
-	"oplus,dsi-panel-white-point-compensation-on",
 #endif /* OPLUS_FEATURE_DISPLAY */
 };
 
@@ -304,7 +294,6 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-sticky_still_disable-command-state",
 	"qcom,mdss-dsi-sticky_on_fly-command-state",
 	"qcom,mdss-dsi-trigger_self_refresh-command-state",
-	"qcom,mdss-dsi-fps-switch-command-state",
 #ifdef OPLUS_FEATURE_DISPLAY_ADFR
 	"qcom,mdss-dsi-adfr-auto-on-command-state",
 	"qcom,mdss-dsi-adfr-auto-off-command-state",
@@ -464,11 +453,10 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,dsi-panel-btb-switch-command-state",
 	"qcom,mdss-dsi-panel-info-switch-page-command-state",
 	"qcom,mdss-dsi-panel-init-command-state",
+	"qcom,mdss-dsi-optimize-command-state",
+	"qcom,mdss-dsi-optimize-split-command-state",
 	"qcom,mdss-dsi-optimize-on-command-state",
-	"qcom,mdss-dsi-optimize-vice-on-command-state",
-	"qcom,mdss-dsi-vid-144hz-switch-command-state",
 	"qcom,mdss-dsi-vid-120hz-switch-command-state",
-	"qcom,mdss-dsi-vid-90hz-switch-command-state",
 	"qcom,mdss-dsi-vid-60hz-switch-command-state",
 	"qcom,mdss-dsi-default-switch-page-command-state",
 	"qcom,mdss-dsi-skipframe-dbv-command-state",
@@ -495,16 +483,9 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-uir-loading-effect-2-command-state",
 	"qcom,mdss-dsi-uir-loading-effect-3-command-state",
 	"qcom,mdss-dsi-set-dc-on-command-state",
-	"qcom,mipi-err-check-page-command-state",
-	"oplus,dsi-panel-pcd-check-enter-command-state",
-	"oplus,dsi-panel-pcd-check-exit-command-state",
-	"oplus,dsi-panel-lvd-check-enter-command-state",
-	"oplus,dsi-panel-lvd-check-exit-command-state",
 	"oplus,dsi-panel-gamma-compensation-page0-command-state",
 	"oplus,dsi-panel-gamma-compensation-page1-command-state",
 	"oplus,dsi-panel-gamma-compensation-command-state",
-	"oplus,dsi-panel-white-point-compensation-off-state",
-	"oplus,dsi-panel-white-point-compensation-on-state",
 #endif /* OPLUS_FEATURE_DISPLAY */
 };
 
@@ -678,11 +659,7 @@ int oplus_panel_cmd_switch(struct dsi_panel *panel, enum dsi_cmd_set_type *type)
 
 	oplus_panel_pwm_cmd_replace_handle(panel, type);
 	if (*type == DSI_CMD_SET_ON && oplus_panel_id_compatibility(panel)) {
-		if (1 == panel_id_custom) {
-			*type = DSI_CMD_SET_COMPATIBILITY_VICE_ON;
-		} else {
-			*type = DSI_CMD_SET_COMPATIBILITY_ON;
-		}
+		*type = DSI_CMD_SET_COMPATIBILITY_ON;
 	}
 
 	count = panel->cur_mode->priv_info->cmd_sets[*type].count;
@@ -978,11 +955,11 @@ int oplus_panel_cmdq_sync_count_decrease(void *sde_connector)
 	return 0;
 }
 
-int oplus_panel_send_asynchronous_cmd(struct dsi_display *display)
+int oplus_panel_send_asynchronous_cmd(void)
 {
 	int rc = 0;
 
-	rc = oplus_display_panel_set_demura2_offset(display);
+	rc = oplus_display_panel_set_demura2_offset();
 
 	return rc;
 }

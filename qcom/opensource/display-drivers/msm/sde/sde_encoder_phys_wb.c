@@ -46,7 +46,7 @@ static const u32 cwb_irq_tbl[PINGPONG_MAX] = {SDE_NONE, INTR_IDX_PP1_OVFL,
 	INTR_IDX_PP5_OVFL, SDE_NONE, SDE_NONE};
 
 static const u32 dcwb_irq_tbl[PINGPONG_MAX] = {SDE_NONE, SDE_NONE,
-	SDE_NONE, SDE_NONE, SDE_NONE, SDE_NONE, SDE_NONE, SDE_NONE,
+	SDE_NONE, SDE_NONE, SDE_NONE, SDE_NONE,
 	INTR_IDX_PP_CWB_OVFL, SDE_NONE, INTR_IDX_PP_CWB2_OVFL, SDE_NONE};
 
 /**
@@ -396,19 +396,6 @@ static void _sde_enc_phys_wb_get_out_resolution(struct drm_crtc_state *crtc_stat
 		swap(*out_width, *out_height);
 }
 
-static void _sde_encoder_phys_wb_get_pu_roi(struct sde_crtc_state *cstate,
-	struct sde_connector_state *c_conn_state, u32 ds_tap_pt,
-	struct sde_rect *pu_roi)
-{
-	if (!cstate || !c_conn_state || !pu_roi)
-		return;
-
-	if (ds_tap_pt == CAPTURE_MIXER_OUT)
-		sde_kms_rect_merge_rectangles(&cstate->user_roi_list, pu_roi);
-	else
-		sde_kms_rect_merge_rectangles(&c_conn_state->rois, pu_roi);
-}
-
 static void _sde_encoder_phys_wb_setup_cdp(struct sde_encoder_phys *phys_enc,
 		struct sde_hw_wb_cfg *wb_cfg)
 {
@@ -440,38 +427,27 @@ static void _sde_encoder_phys_wb_setup_roi(struct sde_encoder_phys *phys_enc,
 	struct drm_crtc_state *crtc_state = wb_enc->crtc->state;
 	struct sde_crtc_state *cstate = to_sde_crtc_state(crtc_state);
 	struct sde_rect pu_roi = {0,};
-	struct sde_connector_state *c_conn_state;
-	u32 ds_tap_pt = sde_crtc_get_property(cstate, CRTC_PROP_CAPTURE_OUTPUT);
-	bool crop_enabled = false;
 
 	if (!hw_wb->ops.setup_roi)
 		return;
 
 	if (hw_wb->ops.setup_crop && phys_enc->in_clone_mode) {
-	c_conn_state = to_sde_connector_state(phys_enc->connector->state);
-
 		wb_cfg->crop.x = wb_cfg->roi.x;
 		wb_cfg->crop.y = wb_cfg->roi.y;
 
-		if (cstate->user_roi_list.num_rects || c_conn_state->rois.num_rects) {
-			_sde_encoder_phys_wb_get_pu_roi(cstate, c_conn_state, ds_tap_pt, &pu_roi);
+		if (cstate->user_roi_list.num_rects) {
+			sde_kms_rect_merge_rectangles(&cstate->user_roi_list, &pu_roi);
 
 			if ((wb_cfg->roi.w != pu_roi.w) || (wb_cfg->roi.h != pu_roi.h)) {
 				/* offset cropping region to PU region */
 				wb_cfg->crop.x = wb_cfg->crop.x - pu_roi.x;
 				wb_cfg->crop.y = wb_cfg->crop.y - pu_roi.y;
 				hw_wb->ops.setup_crop(hw_wb, wb_cfg, true);
-				crop_enabled = true;
 			} else {
 				hw_wb->ops.setup_crop(hw_wb, wb_cfg, false);
 			}
-			/* Align ROI to top left corner, when PU is enabled */
-			wb_cfg->roi.x = 0;
-			wb_cfg->roi.y = 0;
-		} else if (((wb_cfg->roi.w != out_width) || (wb_cfg->roi.h != out_height))
-				&& !phys_enc->quad_cwb_roi) {
+		} else if ((wb_cfg->roi.w != out_width) || (wb_cfg->roi.h != out_height)) {
 			hw_wb->ops.setup_crop(hw_wb, wb_cfg, true);
-			crop_enabled = true;
 		} else {
 			hw_wb->ops.setup_crop(hw_wb, wb_cfg, false);
 		}
@@ -483,9 +459,7 @@ static void _sde_encoder_phys_wb_setup_roi(struct sde_encoder_phys *phys_enc,
 		}
 
 		SDE_EVT32(DRMID(phys_enc->parent), WBID(wb_enc), wb_cfg->crop.x, wb_cfg->crop.y,
-				pu_roi.x, pu_roi.y, pu_roi.w, pu_roi.h,
-				wb_cfg->roi.x, wb_cfg->roi.y, wb_cfg->roi.w, wb_cfg->roi.h,
-				crop_enabled, ds_tap_pt);
+				pu_roi.x, pu_roi.y, pu_roi.w, pu_roi.h);
 	}
 
 	hw_wb->ops.setup_roi(hw_wb, wb_cfg);
@@ -621,36 +595,7 @@ static void sde_encoder_phys_wb_setup_fb(struct sde_encoder_phys *phys_enc,
 
 }
 
-static inline bool _sde_encoder_is_single_lm_partial_update(struct sde_encoder_phys_wb *wb_enc)
-{
-	struct sde_crtc *sde_crtc;
-	struct sde_crtc_state *cstate;
-	bool lr_only_pu = false;
-
-	if (!wb_enc || !wb_enc->crtc || !wb_enc->crtc->state) {
-		SDE_ERROR("invalid parameter(s)\n");
-		return true;
-	}
-
-	sde_crtc = to_sde_crtc(wb_enc->crtc);
-	cstate = to_sde_crtc_state(wb_enc->crtc->state);
-
-	/**
-	 * partial update logic and CWB is currently supported only
-	 * up to dual pipe configurations.
-	 */
-	if (sde_crtc->num_mixers != CRTC_DUAL_MIXERS_ONLY)
-		return true;
-
-	lr_only_pu =  (!sde_kms_rect_is_null(&cstate->lm_roi[0]) &&
-				sde_kms_rect_is_null(&cstate->lm_roi[1])) ||
-				(sde_kms_rect_is_null(&cstate->lm_roi[0]) &&
-				!sde_kms_rect_is_null(&cstate->lm_roi[1]));
-
-	return lr_only_pu;
-}
-
-static void _sde_encoder_phys_wb_setup_cwb_source(struct sde_encoder_phys *phys_enc, bool enable)
+static void _sde_encoder_phys_wb_setup_cwb(struct sde_encoder_phys *phys_enc, bool enable)
 {
 	struct sde_encoder_phys_wb *wb_enc = to_sde_encoder_phys_wb(phys_enc);
 	struct sde_hw_wb *hw_wb = wb_enc->hw_wb;
@@ -659,25 +604,28 @@ static void _sde_encoder_phys_wb_setup_cwb_source(struct sde_encoder_phys *phys_
 	struct sde_crtc *crtc = to_sde_crtc(wb_enc->crtc);
 	struct sde_hw_pingpong *hw_pp = phys_enc->hw_pp;
 	struct sde_hw_dnsc_blur *hw_dnsc_blur = phys_enc->hw_dnsc_blur;
-	bool need_merge = false;
-	int i = 0, num_mixers = 0;
+	bool need_merge = (crtc->num_mixers > 1);
+	enum sde_dcwb;
+	int i = 0;
 	const int num_wb = 1;
 
-	/**
-	 * 3d_merge active or cwb active for cwb path has to be set based upon
-	 * LMs in a CTL path. On cwb disable commit both 3d_merge active and cwb
-	 * active for a particular CTL path has to be disabled.
-	 */
-	if (enable) {
-		need_merge = !(_sde_encoder_is_single_lm_partial_update(wb_enc));
-		num_mixers = need_merge ? crtc->num_mixers : CRTC_SINGLE_MIXER_ONLY;
-		if (phys_enc->quad_cwb_roi) {
-			need_merge = true;
-			num_mixers = CRTC_DUAL_MIXERS_ONLY;
-		}
-	} else {
-		need_merge = (crtc->num_mixers > CRTC_SINGLE_MIXER_ONLY) ? true : false;
-		num_mixers = crtc->num_mixers;
+	if (!phys_enc->in_clone_mode) {
+		SDE_DEBUG("[enc:%d wb:%d] not in CWB mode. early return\n",
+				DRMID(phys_enc->parent), WBID(wb_enc));
+		return;
+	}
+
+	if (!hw_pp || !hw_ctl || !hw_wb || hw_pp->idx >= PINGPONG_MAX) {
+		SDE_ERROR("[enc:%d wb:%d] invalid hw resources - return\n",
+				DRMID(phys_enc->parent), WBID(wb_enc));
+		return;
+	}
+
+	if (crtc->num_mixers > MAX_CWB_PER_CTL_V1) {
+		SDE_ERROR("[enc:%d wb:%d] %d LM %d CWB case not supported\n",
+				DRMID(phys_enc->parent), WBID(wb_enc),
+				crtc->num_mixers, MAX_CWB_PER_CTL_V1);
+		return;
 	}
 
 	hw_ctl = crtc->mixers[0].hw_ctl;
@@ -689,7 +637,7 @@ static void _sde_encoder_phys_wb_setup_cwb_source(struct sde_encoder_phys *phys_
 		intf_cfg.wb_count = num_wb;
 		intf_cfg.wb[0] = hw_wb->idx;
 
-		for (i = 0; i < num_mixers; i++) {
+		for (i = 0; i < crtc->num_mixers; i++) {
 			if (test_bit(SDE_WB_DCWB_CTRL, &hw_wb->caps->features))
 				intf_cfg.cwb[intf_cfg.cwb_count++] =
 						(enum sde_cwb)(hw_pp->dcwb_idx + i);
@@ -741,37 +689,6 @@ static void _sde_encoder_phys_wb_setup_cwb_source(struct sde_encoder_phys *phys_
 	}
 }
 
-static void _sde_encoder_phys_wb_setup_cwb(struct sde_encoder_phys *phys_enc, bool enable)
-{
-	struct sde_encoder_phys_wb *wb_enc = to_sde_encoder_phys_wb(phys_enc);
-	struct sde_hw_wb *hw_wb = wb_enc->hw_wb;
-	struct sde_hw_ctl *hw_ctl = phys_enc->hw_ctl;
-	struct sde_crtc *crtc = to_sde_crtc(wb_enc->crtc);
-	struct sde_hw_pingpong *hw_pp = phys_enc->hw_pp;
-	enum sde_dcwb;
-
-	if (!phys_enc->in_clone_mode) {
-		SDE_DEBUG("[enc:%d wb:%d] not in CWB mode. early return\n",
-				DRMID(phys_enc->parent), WBID(wb_enc));
-		return;
-	}
-
-	if (!hw_pp || !hw_ctl || !hw_wb || hw_pp->idx >= PINGPONG_MAX) {
-		SDE_ERROR("[enc:%d wb:%d] invalid hw resources - return\n",
-				DRMID(phys_enc->parent), WBID(wb_enc));
-		return;
-	}
-
-	if (crtc->num_mixers > MAX_CWB_PER_CTL_V1) {
-		SDE_ERROR("[enc:%d wb:%d] %d LM %d CWB case not supported\n",
-				DRMID(phys_enc->parent), WBID(wb_enc),
-				crtc->num_mixers, MAX_CWB_PER_CTL_V1);
-		return;
-	}
-
-	_sde_encoder_phys_wb_setup_cwb_source(phys_enc, enable);
-}
-
 static void _sde_encoder_phys_wb_setup_ctl(struct sde_encoder_phys *phys_enc,
 		const struct sde_format *format)
 {
@@ -781,7 +698,6 @@ static void _sde_encoder_phys_wb_setup_ctl(struct sde_encoder_phys *phys_enc,
 	struct sde_hw_dnsc_blur *hw_dnsc_blur;
 	struct sde_hw_ctl *ctl;
 	const int num_wb = 1;
-	bool need_merge = false;
 
 	if (!phys_enc) {
 		SDE_ERROR("invalid encoder\n");
@@ -799,9 +715,6 @@ static void _sde_encoder_phys_wb_setup_ctl(struct sde_encoder_phys *phys_enc,
 	hw_cdm = phys_enc->hw_cdm;
 	hw_dnsc_blur = phys_enc->hw_dnsc_blur;
 	ctl = phys_enc->hw_ctl;
-
-	need_merge = phys_enc->quad_cwb_roi ? true :
-			!(_sde_encoder_is_single_lm_partial_update(wb_enc));
 
 	if (test_bit(SDE_CTL_ACTIVE_CFG, &ctl->caps->features) &&
 			(phys_enc->hw_ctl && phys_enc->hw_ctl->ops.setup_intf_cfg_v1)) {
@@ -825,12 +738,12 @@ static void _sde_encoder_phys_wb_setup_ctl(struct sde_encoder_phys *phys_enc,
 			intf_cfg_v1->dnsc_blur[0] = hw_dnsc_blur->idx;
 		}
 
-		if (mode_3d && need_merge && hw_pp && hw_pp->merge_3d &&
+		if (mode_3d && hw_pp && hw_pp->merge_3d &&
 			intf_cfg_v1->merge_3d_count < MAX_MERGE_3D_PER_CTL_V1)
 			intf_cfg_v1->merge_3d[intf_cfg_v1->merge_3d_count++] = hw_pp->merge_3d->idx;
 
 		if (hw_pp && hw_pp->ops.setup_3d_mode)
-			hw_pp->ops.setup_3d_mode(hw_pp, need_merge ? mode_3d : 0);
+			hw_pp->ops.setup_3d_mode(hw_pp, mode_3d);
 
 		/* setup which pp blk will connect to this wb */
 		if (hw_pp && hw_wb->ops.bind_pingpong_blk)
@@ -1021,14 +934,10 @@ static int _sde_enc_phys_wb_validate_cwb(struct sde_encoder_phys *phys_enc,
 {
 	struct drm_framebuffer *fb;
 	struct sde_crtc_state *cstate = to_sde_crtc_state(crtc_state);
-	struct sde_connector_state *c_conn_state;
 	struct sde_rect wb_roi = {0,}, pu_roi = {0,};
-	u32  out_width = 0, out_height = 0, ds_tap_pt;
+	u32  out_width = 0, out_height = 0;
 	const struct sde_format *fmt;
 	int num_lm, prog_line, ret = 0;
-
-	ds_tap_pt = sde_crtc_get_property(cstate, CRTC_PROP_CAPTURE_OUTPUT);
-	c_conn_state = to_sde_connector_state(conn_state);
 
 	fb = sde_wb_connector_state_get_output_fb(conn_state);
 	if (!fb) {
@@ -1098,13 +1007,6 @@ static int _sde_enc_phys_wb_validate_cwb(struct sde_encoder_phys *phys_enc,
 		return -EINVAL;
 	}
 
-	if (num_lm == 4 && !((wb_roi.w == out_width/2) && (wb_roi.x == out_width / 2 ||
-			wb_roi.x == out_width / 4 || wb_roi.x == 0))) {
-		SDE_ERROR("invalid cwb roi for quad pipe[%d %d] out[%d]", wb_roi.x,
-			wb_roi.w, out_width);
-		return -EINVAL;
-	}
-
 	/*
 	 * If output size is equal to input size ensure wb_roi with x and y offset
 	 * will be within buffer. If output size is smaller, only width and height are taken
@@ -1126,21 +1028,11 @@ static int _sde_enc_phys_wb_validate_cwb(struct sde_encoder_phys *phys_enc,
 	}
 
 	/* validate wb roi against pu rect */
-	if (cstate->user_roi_list.num_rects || c_conn_state->rois.num_rects) {
-		_sde_encoder_phys_wb_get_pu_roi(cstate, c_conn_state, ds_tap_pt, &pu_roi);
-
+	if (cstate->user_roi_list.num_rects) {
+		sde_kms_rect_merge_rectangles(&cstate->user_roi_list, &pu_roi);
 		if (wb_roi.w > pu_roi.w || wb_roi.h > pu_roi.h) {
 			SDE_ERROR("invalid wb roi with pu [%dx%d vs %dx%d]\n",
 					wb_roi.w, wb_roi.h, pu_roi.w, pu_roi.h);
-			return -EINVAL;
-		}
-
-		if (wb_roi.y < pu_roi.y || wb_roi.x < pu_roi.x ||
-			wb_roi.y + wb_roi.h > pu_roi.y + pu_roi.h ||
-			wb_roi.x + wb_roi.w > pu_roi.x + pu_roi.w) {
-			SDE_ERROR("invalid wb roi with pu [%dx%dx%dx%d vs %dx%dx%dx%d]\n",
-					wb_roi.x, wb_roi.y, wb_roi.w, wb_roi.h,
-					pu_roi.x, pu_roi.y, pu_roi.w, pu_roi.h);
 			return -EINVAL;
 		}
 	}
@@ -1531,7 +1423,7 @@ static void _sde_encoder_phys_wb_update_cwb_flush_helper(
 	struct sde_encoder_phys_wb *wb_enc = to_sde_encoder_phys_wb(phys_enc);
 	struct sde_crtc_state *crtc_state;
 	struct sde_crtc *crtc;
-	int i = 0, num_mixers;
+	int i = 0;
 	int cwb_capture_mode = 0;
 	bool need_merge = false;
 	bool dspp_out = false;
@@ -1540,7 +1432,6 @@ static void _sde_encoder_phys_wb_update_cwb_flush_helper(
 	enum sde_dcwb dcwb_idx = 0;
 	size_t dither_sz = 0;
 	void *dither_cfg = NULL;
-	enum sde_cwb src_pp_cwb_idx = 0;
 
 	/* In CWB mode, program actual source master sde_hw_ctl from crtc */
 	crtc = to_sde_crtc(wb_enc->crtc);
@@ -1553,20 +1444,9 @@ static void _sde_encoder_phys_wb_update_cwb_flush_helper(
 		return;
 	}
 
-	if (enable) {
-		need_merge = !(_sde_encoder_is_single_lm_partial_update(wb_enc));
-		num_mixers = need_merge ? crtc->num_mixers : CRTC_SINGLE_MIXER_ONLY;
-		if (phys_enc->quad_cwb_roi) {
-			need_merge = true;
-			num_mixers = CRTC_DUAL_MIXERS_ONLY;
-		}
-	} else {
-		need_merge = (crtc->num_mixers > CRTC_SINGLE_MIXER_ONLY) ? true : false;
-		num_mixers = crtc->num_mixers;
-	}
-
 	crtc_state = to_sde_crtc_state(wb_enc->crtc->state);
 	cwb_capture_mode = sde_crtc_get_property(crtc_state, CRTC_PROP_CAPTURE_OUTPUT);
+	need_merge = (crtc->num_mixers > 1) ? true : false;
 	dspp_out = (cwb_capture_mode == CAPTURE_DSPP_OUT);
 	cwb_idx = (enum sde_cwb)hw_pp->idx;
 	src_pp_idx = (enum sde_cwb)crtc->mixers[0].hw_lm->idx;
@@ -1585,41 +1465,17 @@ static void _sde_encoder_phys_wb_update_cwb_flush_helper(
 		}
 	}
 
-	for (i = 0; i < num_mixers; i++) {
+	for (i = 0; i < crtc->num_mixers; i++) {
 		src_pp_idx = (enum sde_cwb) (src_pp_idx + i);
-		/* Mapping between hw_pp and src_pp for quad pipe CWB ROI
-		 *+---------+---------+---------+-----+
-		 *| HW pp   | src_pp_idx | ROI        |
-		 *+---------+---------+---------+-----+
-		 *| 0,1     | 1, 2       | Left ROI   |
-		 *| 2,1     | 3, 2       | Centre ROI |
-		 *| 2,3     | 3, 4       | Right ROI  |
-		 *+---------+---------+---------+-----+
-		 */
-		if (phys_enc->quad_cwb_roi) {
-			switch (phys_enc->quad_cwb_roi) {
-			case CWB_RIGHT_ROI:
-				src_pp_cwb_idx = src_pp_idx + 2;
-				break;
-			case CWB_CENTER_ROI:
-				src_pp_cwb_idx = src_pp_idx % 2 + 2;
-				break;
-			default:
-				src_pp_cwb_idx = src_pp_idx;
-			}
-		}
 
 		if (test_bit(SDE_WB_DCWB_CTRL, &hw_wb->caps->features)) {
-			dcwb_idx = hw_pp->dcwb_idx + i;
+			dcwb_idx = (enum sde_dcwb) ((hw_pp->idx - (PINGPONG_CWB_0 - 1)) + i);
 			if ((test_bit(SDE_WB_CWB_DITHER_CTRL, &hw_wb->caps->features)) &&
 				hw_wb->ops.program_cwb_dither_ctrl){
 				hw_wb->ops.program_cwb_dither_ctrl(hw_wb,
 					dcwb_idx, dither_cfg, dither_sz, enable);
 			}
-			if (hw_wb->ops.program_dcwb_ctrl && phys_enc->quad_cwb_roi)
-				hw_wb->ops.program_dcwb_ctrl(hw_wb, dcwb_idx,
-					src_pp_cwb_idx, cwb_capture_mode, enable);
-			else
+			if (hw_wb->ops.program_dcwb_ctrl)
 				hw_wb->ops.program_dcwb_ctrl(hw_wb, dcwb_idx,
 					src_pp_idx, cwb_capture_mode, enable);
 			if (hw_ctl->ops.update_bitmask)
@@ -1686,8 +1542,7 @@ static void _sde_encoder_phys_wb_update_cwb_flush(struct sde_encoder_phys *phys_
 	src_pp_idx = (enum sde_cwb)crtc->mixers[0].hw_lm->idx;
 	cwb_idx = (enum sde_cwb)hw_pp->idx;
 	dspp_out = (cwb_capture_mode == CAPTURE_DSPP_OUT);
-	need_merge = phys_enc->quad_cwb_roi ? true :
-			!(_sde_encoder_is_single_lm_partial_update(wb_enc));
+	need_merge = (crtc->num_mixers > 1) ? true : false;
 
 	if (test_bit(SDE_WB_DCWB_CTRL, &hw_wb->caps->features)) {
 		dcwb_idx = hw_pp->dcwb_idx;
@@ -1870,7 +1725,7 @@ static void sde_encoder_phys_wb_setup(struct sde_encoder_phys *phys_enc)
 	struct drm_crtc_state *crtc_state = wb_enc->crtc->state;
 	struct drm_framebuffer *fb;
 	struct sde_rect *wb_roi = &wb_enc->wb_roi;
-	u32 out_width = 0, out_height = 0, num_lm;
+	u32 out_width = 0, out_height = 0;
 
 	SDE_DEBUG("[enc:%d wb:%d] mode_set:\"%s\",%d,%d]\n", DRMID(phys_enc->parent),
 			WBID(wb_enc), mode.name, mode.hdisplay, mode.vdisplay);
@@ -1895,8 +1750,6 @@ static void sde_encoder_phys_wb_setup(struct sde_encoder_phys *phys_enc)
 		return;
 	}
 
-	num_lm = sde_crtc_get_num_datapath(crtc_state->crtc, conn_state->connector, crtc_state);
-
 	SDE_DEBUG("[fb_id:%u][fb:%u,%u]\n", fb->base.id, fb->width, fb->height);
 
 	_sde_enc_phys_wb_get_out_resolution(crtc_state, conn_state, &out_width, &out_height);
@@ -1905,17 +1758,6 @@ static void sde_encoder_phys_wb_setup(struct sde_encoder_phys *phys_enc)
 		wb_roi->y = 0;
 		wb_roi->w = out_width;
 		wb_roi->h = out_height;
-	}
-
-	phys_enc->quad_cwb_roi = CWB_ROI_DISABLED;
-
-	if (num_lm == 4) {
-		if (wb_roi->x == out_width / 2 && wb_roi->w == out_width / 2)
-			phys_enc->quad_cwb_roi = CWB_RIGHT_ROI;
-		else if (wb_roi->x == out_width / 4 && wb_roi->w == out_width / 2)
-			phys_enc->quad_cwb_roi = CWB_CENTER_ROI;
-		else if (wb_roi->x == 0 && wb_roi->w == out_width / 2)
-			phys_enc->quad_cwb_roi = CWB_LEFT_ROI;
 	}
 
 	wb_enc->wb_fmt = sde_get_sde_format_ext(fb->format->format,
@@ -1941,12 +1783,6 @@ static void sde_encoder_phys_wb_setup(struct sde_encoder_phys *phys_enc)
 	sde_encoder_phys_wb_set_qos(phys_enc);
 
 	sde_encoder_phys_setup_cdm(phys_enc, fb, wb_enc->wb_fmt, wb_roi);
-
-	/* clear existing intf cwb configuration before
-	 * updating for single LM PartialUpdate usecase.
-	 */
-	if (_sde_encoder_is_single_lm_partial_update(wb_enc))
-		_sde_encoder_phys_wb_setup_cwb(phys_enc, false);
 
 	sde_encoder_phys_wb_setup_fb(phys_enc, fb, wb_roi, out_width, out_height);
 
@@ -2264,8 +2100,6 @@ static bool _sde_encoder_phys_wb_is_idle(struct sde_encoder_phys *phys_enc)
 static void _sde_encoder_phys_wb_reset_state(struct sde_encoder_phys *phys_enc)
 {
 	struct sde_encoder_phys_wb *wb_enc = to_sde_encoder_phys_wb(phys_enc);
-	struct sde_encoder_virt *sde_enc = to_sde_encoder_virt(phys_enc->parent);
-	struct sde_crtc *sde_crtc;
 
 	phys_enc->enable_state = SDE_ENC_DISABLED;
 
@@ -2276,10 +2110,6 @@ static void _sde_encoder_phys_wb_reset_state(struct sde_encoder_phys *phys_enc)
 		wb_enc->wb_fb = NULL;
 		wb_enc->wb_aspace = NULL;
 	}
-
-	sde_crtc = to_sde_crtc(sde_enc->crtc);
-	if (sde_crtc)
-		sde_crtc->cached_encoder_mask &= ~drm_encoder_mask(phys_enc->parent);
 
 	wb_enc->crtc = NULL;
 	phys_enc->hw_cdm = NULL;

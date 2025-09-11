@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -229,7 +229,6 @@ enum dsi_dfps_type {
 	DSI_DFPS_IMMEDIATE_CLK,
 	DSI_DFPS_IMMEDIATE_HFP,
 	DSI_DFPS_IMMEDIATE_VFP,
-	DSI_DFPS_IMMEDIATE_HV_P,
 	DSI_DFPS_MAX
 };
 
@@ -240,18 +239,12 @@ enum dsi_dfps_type {
  *						change in hfp
  * @DSI_DYN_CLK_TYPE_CONST_FPS_ADJUST_VFP:	Constant FPS supported with
  *						change in vfp
- * @DSI_DYN_CLK_TYPE_ADJUST_HFP:		Variable FPS supported with
- *						change in hfp
- * @DSI_DYN_CLK_TYPE_ADJUST_VFP:		Variable FPS supported with
- *						change in vfp
  * @DSI_DYN_CLK_TYPE_MAX:
  */
 enum dsi_dyn_clk_feature_type {
 	DSI_DYN_CLK_TYPE_LEGACY = 0,
 	DSI_DYN_CLK_TYPE_CONST_FPS_ADJUST_HFP,
 	DSI_DYN_CLK_TYPE_CONST_FPS_ADJUST_VFP,
-	DSI_DYN_CLK_TYPE_ADJUST_HFP,
-	DSI_DYN_CLK_TYPE_ADJUST_VFP,
 	DSI_DYN_CLK_TYPE_MAX
 };
 
@@ -288,19 +281,15 @@ enum dsi_dyn_clk_feature_type {
  * @DSI_CMD_SET_ARP_MODE1_HW_TE_OFF:       ARP panel HW TE mode is turned off.
  *                                         SW to drive any frequnecy stepping
  * @DSI_CMD_SET_FI_PATTAREN1_CHANGE:       Command to change to frequency pattern1
- * @DSI_CMD_SET_FI_PATTAREN2_CHANGE:       Command to change to frequency pattern2
- * @DSI_CMD_SET_FI_PATTAREN3_CHANGE:       Command to change to frequency pattern3
- * @DSI_CMD_SET_FI_PATTAREN4_CHANGE:       Command to change to frequency pattern4
- * @DSI_CMD_SET_FI_PATTAREN5_CHANGE:       Command to change to frequency pattern5
- * @DSI_CMD_SET_FI_PATTAREN6_CHANGE:       Command to change to frequency pattern6
- * @DSI_CMD_SET_FI_PATTAREN7_CHANGE:       Command to change to frequency pattern7
- * @DSI_CMD_SET_FI_PATTAREN8_CHANGE:       Command to change to frequency pattern8
+ * @DSI_CMD_SET_FI_PATTAREN1_CHANGE:       Command to change to frequency pattern2
+ * @DSI_CMD_SET_FI_PATTAREN1_CHANGE:       Command to change to frequency pattern3
+ * @DSI_CMD_SET_FI_PATTAREN1_CHANGE:       Command to change to frequency pattern4
+ * @DSI_CMD_SET_FI_PATTAREN1_CHANGE:       Command to change to frequency pattern5
  * @DSI_CMD_SET_STICKY_STILL_EN            This would enable still indication(copy frame to GRAM)
  *                                         for all the frames until disable.
  * @DSI_CMD_SET_STICKY_STILL_DISABLE       Still indiaction disable command
  * @DSI_CMD_SET_STICKY_ON_FLY:             Still indication enable for only one frame
  * @DSI_CMD_SET_TRIGGER_SELF_REFRESH:      Trigger self refresh from Gram
- * @DSI_CMD_SET_FPS_SWITCH                 Set fps switch
  * @DSI_CMD_SET_MAX
  */
 enum dsi_cmd_set_type {
@@ -337,14 +326,10 @@ enum dsi_cmd_set_type {
 	DSI_CMD_SET_FI_PATTAREN3_CHANGE,
 	DSI_CMD_SET_FI_PATTAREN4_CHANGE,
 	DSI_CMD_SET_FI_PATTAREN5_CHANGE,
-	DSI_CMD_SET_FI_PATTAREN6_CHANGE,
-	DSI_CMD_SET_FI_PATTAREN7_CHANGE,
-	DSI_CMD_SET_FI_PATTAREN8_CHANGE,
 	DSI_CMD_SET_STICKY_STILL_EN,
 	DSI_CMD_SET_STICKY_STILL_DISABLE,
 	DSI_CMD_SET_STICKY_ON_FLY,
 	DSI_CMD_SET_TRIGGER_SELF_REFRESH,
-	DSI_CMD_SET_FPS_SWITCH,
 	DSI_CMD_SET_MAX
 };
 #endif /* OPLUS_FEATURE_DISPLAY */
@@ -472,6 +457,7 @@ struct dsi_panel_cmd_set {
  * @roi_caps:         Panel ROI capabilities.
  * @qsync_min_fps:    Qsync min fps rate
  * @avr_step_fps:     AVR step fps rate
+ * @esync_enabled:    esync enabled
  * @esync_emsync_fps: esync EM pulse rate
  * @te_pulse_width_us:         Pulse width of TE in microseconds
  */
@@ -502,6 +488,7 @@ struct dsi_mode_info {
 	struct msm_roi_caps roi_caps;
 	u32 qsync_min_fps;
 	u32 avr_step_fps;
+	bool esync_enabled;
 	u32 esync_emsync_fps;
 	u32 te_pulse_width_us;
 };
@@ -664,7 +651,6 @@ struct dsi_host_config {
 	u64 esc_clk_rate_hz;
 	u64 bit_clk_rate_hz;
 	u64 bit_clk_rate_hz_override;
-	bool esync_enabled;
 	struct dsi_mode_info video_timing;
 	struct dsi_lane_map lane_map;
 };
@@ -856,9 +842,6 @@ enum dsi_error_status {
 struct dsi_dyn_clk_delay {
 	u32 pipe_delay;
 	u32 pipe_delay2;
-	u32 pipe_delay3;
-	u32 pll_reg_flush_delay;
-	u32 pll_reg_post_flush_delay;
 	u32 pll_delay;
 };
 
@@ -868,7 +851,6 @@ enum dsi_dyn_clk_control_bits {
 	DYN_REFRESH_SYNC_MODE,
 	DYN_REFRESH_SW_TRIGGER,
 	DYN_REFRESH_SWI_CTRL,
-	DYN_REFRESH_PROG_DR,
 };
 
 /* convert dsi pixel format into bits per pixel */

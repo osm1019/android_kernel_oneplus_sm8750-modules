@@ -11,7 +11,6 @@
 #define _OPLUS_PANEL_H_
 #include <linux/soc/qcom/panel_event_notifier.h>
 #define MAX_PWM_CMD 16
-#define PANEL_REGS_CHECK_NUM_MAX 64
 
 /* In 120hz general solution, L1, L2, L3 means 1 Pulse 3 Pulse and 18 Pulse */
 enum PWM_STATE {
@@ -125,7 +124,6 @@ struct oplus_serial_number {
 	u32 serial_number_reg;
 	int serial_number_index;
 	int serial_number_conut;
-	u32 base_year;
 };
 
 struct oplus_btb_sn {
@@ -141,25 +139,6 @@ struct oplus_drm_panel_esd_config{
 	u32 status_match_modes;
 	int esd_error_flag_gpio;
 	int esd_error_flag_gpio_slave;
-	int esd_error_flag_expect_value;
-	int esd_error_flag_expect_value_slave;
-};
-
-/**
- * oplus_panel_regs_check_config mipi err check config struct
- */
-struct oplus_panel_regs_check_config {
-	u32 config;
-	u32 enter_cmd;
-	u32 exit_cmd;
-	u8 check_regs[PANEL_REGS_CHECK_NUM_MAX];
-	u8 check_regs_rlen[PANEL_REGS_CHECK_NUM_MAX];
-	u32 reg_count;
-	u8 *check_value;
-	u8 *return_buf;
-	u8 *check_buf;
-	u32 groups;
-	u32 match_modes;
 };
 
 struct oplus_panel_cmd_set{
@@ -213,11 +192,8 @@ struct oplus_panel {
 	u32 osc_clk_mode0_rate;
 	u32 osc_clk_mode1_rate;
 	bool is_apl_read_support;
-	bool white_point_compensation_enabled;
-	bool aod_backlight_async;
 
 	/* ---------------- apollo variate ---------------- */
-	bool is_switching;
 	bool is_apollo_support;
 	bool skip_mipi_last_cmd;
 	u32 sync_brightness_level;
@@ -239,7 +215,6 @@ struct oplus_panel {
 	bool oplus_bl_demura_dbv_support;
 	int bl_demura_mode;
 	bool vid_timming_switch_enabled;
-	bool vid_timming_switch_post_enabled;
 
 	bool need_power_on_backlight;
 	struct oplus_brightness_alpha *dc_ba_seq;
@@ -256,37 +231,18 @@ struct oplus_panel {
 	u32 last_vsync_width;
 	u32 last_refresh_rate;
 	u32 work_frame;
-	bool bl_ic_ktz8868_used;
+	bool bl_ic_ktz8866_used;
 	bool need_trigger_event;
-	bool pl_check_enable;
-	bool pl_check_flag;
-	int pl_check_time_gap;
-	bool mipi_reset_enable;
 
 	unsigned int power_on_sequence[7][2];
 	unsigned int power_off_sequence[7][2];
 	unsigned int panel_reset_position;
-	/*add for mipi err check */
-	struct oplus_panel_regs_check_config mipi_err_config;
-	/*add for pcd check */
-	struct oplus_panel_regs_check_config pcd_config;
-	/*add for lvd check */
-	struct oplus_panel_regs_check_config lvd_config;
-
-	bool fpga_support;
-	bool fpga_reset_completed;
-	bool skip_panel_recovery;
 
 	bool gamma_compensation_support;
 	int power_mode_early;
-
 	/* indicates how many frames cost from aod off cmd sent to normal frame,
 	"0" means once aod off cmd sent the next frame will be normal frame */
 	unsigned int aod_off_frame_cost;
-
-	/* add for factory test fps switch, ignore some fps */
-	int ignore_mode_count;
-	u32 *ignore_mode;
 };
 
 #endif /* _OPLUS_PANEL_H_ */

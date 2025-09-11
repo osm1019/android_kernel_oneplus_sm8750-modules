@@ -61,7 +61,6 @@
 #define MAX_DP_MST_DRM_ENCODERS		2
 #define MAX_DP_MST_DRM_BRIDGES		2
 #define HPD_STRING_SIZE			30
-#define UPDATE_PAYLOAD_RETRY_CNT	3
 #define DP_MST_CONN_ID(bridge) ((bridge)->connector ? \
 		(bridge)->connector->base.id : 0)
 
@@ -657,7 +656,7 @@ static int _dp_mst_bridge_pre_enable_part1(struct dp_mst_bridge *dp_bridge)
 	struct drm_dp_mst_atomic_payload *payload;
 #endif
 	bool ret;
-	int pbn, slots, i;
+	int pbn, slots;
 	int rc = 0;
 
 	DP_MST_DEBUG_V("enter\n");
@@ -690,18 +689,8 @@ static int _dp_mst_bridge_pre_enable_part1(struct dp_mst_bridge *dp_bridge)
 
 	drm_dp_mst_update_slots(mst_state, DP_CAP_ANSI_8B10B);
 
-	for (i = 0; i < UPDATE_PAYLOAD_RETRY_CNT; i++) {
-		rc = mst->mst_fw_cbs->update_payload_part1(&mst->mst_mgr,
-				mst_state, payload);
-		if (rc && (i != UPDATE_PAYLOAD_RETRY_CNT-1)) {
-			DP_WARN("payload allocation failure for conn:%d, retries:%d\n",
-				DP_MST_CONN_ID(dp_bridge), i+1);
-			msleep(100);
-		} else {
-			break;
-		}
-	}
-
+	rc = mst->mst_fw_cbs->update_payload_part1(&mst->mst_mgr,
+			mst_state, payload);
 	if (rc) {
 		DP_ERR("payload allocation failure for conn:%d\n", DP_MST_CONN_ID(dp_bridge));
 		goto end;

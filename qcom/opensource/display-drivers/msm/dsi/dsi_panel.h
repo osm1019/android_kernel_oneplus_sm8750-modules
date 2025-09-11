@@ -92,13 +92,6 @@ struct dsi_dfps_capabilities {
 	u32 *dfps_list;
 	u32 dfps_list_len;
 	bool dfps_support;
-	u32 *dfps_hfp_list;
-	u32 *dfps_hbp_list;
-	u32 *dfps_hpw_list;
-	u32 *dfps_vbp_list;
-	u32 *dfps_vfp_list;
-	u32 *dfps_vpw_list;
-
 };
 
 struct dsi_qsync_capabilities {
@@ -106,7 +99,6 @@ struct dsi_qsync_capabilities {
 	u32 qsync_min_fps;
 	u32 *qsync_min_fps_list;
 	int qsync_min_fps_list_len;
-	bool hwfence_sw_override_always;
 };
 
 struct dsi_avr_capabilities {
@@ -285,9 +277,9 @@ struct dsi_panel {
 	bool reset_gpio_always_on;
 	atomic_t esd_recovery_pending;
 
-#ifdef OPLUS_FEATURE_DISPLAY
+	#ifdef OPLUS_FEATURE_DISPLAY
 	struct oplus_panel oplus_panel;
-#endif /* OPLUS_FEATURE_DISPLAY */
+	#endif /* OPLUS_FEATURE_DISPLAY */
 
 	bool skip_panel_off;
 	bool panel_initialized;
@@ -352,9 +344,6 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 				bool trusted_vm_env);
 
 void dsi_panel_put(struct dsi_panel *panel);
-
-void dsi_panel_get_fps_switch_cmd(struct dsi_panel *panel,
-			struct dsi_display_mode *mode, u32 refresh_rate);
 
 int dsi_panel_drv_init(struct dsi_panel *panel, struct mipi_dsi_host *host);
 
@@ -472,8 +461,6 @@ void dsi_panel_dealloc_cmd_packets(struct dsi_panel_cmd_set *set);
 #ifdef OPLUS_FEATURE_DISPLAY
 int dsi_panel_tx_cmd_set(struct dsi_panel *panel,
 		enum dsi_cmd_set_type type, bool do_peripheral_flush);
-int dsi_panel_parse_cmd_sets_sub(struct dsi_panel_cmd_set *cmd,
-		enum dsi_cmd_set_type type, struct dsi_parser_utils *utils);
 int dsi_panel_set_pinctrl_state(struct dsi_panel *panel, bool enable);
 int dsi_panel_reset(struct dsi_panel *panel);
 #endif /* OPLUS_FEATURE_DISPLAY */

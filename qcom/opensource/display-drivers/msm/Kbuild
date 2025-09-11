@@ -83,7 +83,6 @@ LINUX_INC +=	-I$(DISPLAY_ROOT) \
 	-I$(DISPLAY_ROOT)/../mm-drivers/hw_fence/include \
 	-I$(DISPLAY_ROOT)/../mm-drivers/msm_ext_display/include \
 	-I$(DISPLAY_ROOT)/../mm-drivers/sync_fence/include \
-	-I$(DISPLAY_ROOT)/../securemsm-kernel \
 	-I$(DISPLAY_ROOT)/../synx-kernel/include/uapi/synx/media \
 	-I$(DISPLAY_ROOT)/../synx-kernel/msm/synx \
 	-I$(DISPLAY_ROOT)/include/uapi/display \
@@ -162,7 +161,6 @@ msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_altmode.o \
 				dp/dp_catalog_v500.o \
 				dp/dp_aux.o \
 				dp/dp_panel.o \
-				dp/dp_panel_tu.o \
 				dp/dp_link.o \
 				dp/dp_ctrl.o \
 				dp/dp_audio.o \
@@ -239,8 +237,7 @@ msm_drm-$(CONFIG_DRM_MSM_SDE) += sde/sde_crtc.o \
 				 sde/sde_color_proc_property_helper.o \
 				 sde/sde_color_processing_aiqe.o \
 				 sde/sde_hw_color_proc_aiqe_v1.o \
-				 sde/sde_aiqe_common.o \
-				 sde/sde_loopback.o
+				 sde/sde_aiqe_common.o
 
 msm_drm-$(CONFIG_DRM_SDE_WB) += sde/sde_wb.o \
 				sde/sde_encoder_phys_wb.o
@@ -306,16 +303,13 @@ msm_drm-$(OPLUS_FEATURE_DISPLAY) += \
 				../oplus/SM8750/oplus_display_parse.o \
 				../oplus/SM8750/oplus_display_panel_cmd.o \
 				../oplus/SM8750/oplus_display_ext.o \
-				../oplus/SM8750/oplus_display_esd.o \
-				../oplus/SM8750/oplus_bl_ic_ktz8868.o
+				../oplus/SM8750/oplus_display_esd.o
 
 msm_drm-$(OPLUS_FEATURE_DISPLAY_ADFR) += ../oplus/SM8750/oplus_adfr.o
 
 msm_drm-$(OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION) += ../oplus/SM8750/oplus_display_temp_compensation.o
 
 msm_drm-$(OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT) += ../oplus/SM8750/oplus_onscreenfingerprint.o
-
-msm_drm-$(OPLUS_FEATURE_TP_BASIC) += ../oplus/SM8750/oplus_display_notify_tp.o
 
 ccflags-$(OPLUS_FEATURE_DISPLAY) += \
 	-I$(DISPLAY_ROOT)/oplus/SM8750 \
