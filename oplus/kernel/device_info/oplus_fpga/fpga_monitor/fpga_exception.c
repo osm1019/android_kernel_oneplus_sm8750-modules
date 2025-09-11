@@ -23,13 +23,13 @@
 #define FPGA_MODULE_ID           0x35
 #define FPGA_RESERVED_ID         256
 
-static int fpga_olc_raise_exception(fpga_excep_type excep_tpye)
+static int fpga_olc_raise_exception(fpga_excep_type excep_tpye, void *summary, unsigned int summary_size)
 {
 	struct exception_info *exp_info = NULL;
 	int ret = -1;
 	struct timespec64 time;
 
-	FPGA_ERR("%s:enter,type:%d\n", __func__, excep_tpye);
+	FPGA_INFO("%s:enter,type:%d\n", __func__, excep_tpye);
 
 	exp_info = kmalloc(sizeof(struct exception_info), GFP_KERNEL);
 
@@ -46,7 +46,7 @@ static int fpga_olc_raise_exception(fpga_excep_type excep_tpye)
 	exp_info->exceptionId = (FPGA_RESERVED_ID << 20) | (FPGA_MODULE_ID << 12) | excep_tpye;
 	exp_info->exceptionType = EXCEPTION_KERNEL;
 	exp_info->level = 0;
-	exp_info->atomicLogs = LOG_KERNEL;
+	exp_info->atomicLogs = LOG_KERNEL | LOG_MAIN | LOG_SYSTRACE;
 
 	ret = olc_raise_exception(exp_info);
 	if (ret) {
@@ -58,20 +58,25 @@ free_exp:
 	return ret;
 }
 #else
-static int fpga_olc_raise_exception(fpga_excep_type excep_tpye)
+static  int fpga_olc_raise_exception(fpga_excep_type excep_tpye, void *summary, unsigned int summary_size)
 {
 	return 0;
 }
 #endif /* CONFIG_OPLUS_KEVENT_UPLOAD_DELETE */
 
-int fpga_exception_report(fpga_excep_type excep_tpye)
+int fpga_exception_report(void *fpga_exception_data, fpga_excep_type excep_tpye, void *summary, unsigned int summary_size)
 {
 	int ret = -1;
 
-	FPGA_ERR("%s:enter,type:%d\n", __func__, excep_tpye);
+	struct fpga_exception_data *exception_data = (struct fpga_exception_data *)fpga_exception_data;
+
+	if (!exception_data) {
+		return 0;
+	}
+
 	switch (excep_tpye) {
 	default:
-		ret = fpga_olc_raise_exception(excep_tpye);
+		ret = fpga_olc_raise_exception(excep_tpye, summary, summary_size);
 		break;
 	}
 
